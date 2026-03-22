@@ -8,10 +8,9 @@ import { PixelCanvas } from './components/canvas/PixelCanvas';
 import { PalettePanel } from './components/palette/PalettePanel';
 import { SettingsPanel } from './components/settings/SettingsPanel';
 import { StatusBar } from './components/statusbar/StatusBar';
-import { ImportDialog } from './components/dialogs/ImportDialog';
 import { ExportDialog } from './components/dialogs/ExportDialog';
 import { loadImage } from './utils/imageProcessing';
-import { ToolType, ToneVariant, ResizeAlgorithm, MAP_SIZE } from './types';
+import { ToneVariant } from './types';
 
 // Import colour data - will be bundled by Vite
 import coloursJSON from './data/coloursJSON.json';
@@ -21,8 +20,7 @@ const App: React.FC = () => {
     state, setTool, setBrushSize, setSelectedColour,
     setZoom, setPan, setCursor, toggleGrid, toggleMapBorders,
     setColoursData, rebuildPalette, setRightSidebarTab,
-    openImportDialog, closeImportDialog, setSourceImage,
-    createProject, reconvert, resizeAndReconvert, updateConversionSetting,
+    importImage, updateConversionSetting, resizeAndReconvert,
     setPixelsBatch, commitPixels, fillArea,
     undo, redo, canUndo, canRedo,
     setSelection, copySelection, pasteClipboard,
@@ -41,10 +39,8 @@ const App: React.FC = () => {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't handle shortcuts when typing in inputs
       if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
 
-      // Tool shortcuts
       if (!e.ctrlKey && !e.metaKey) {
         switch (e.key.toLowerCase()) {
           case 'b': setTool('pencil'); return;
@@ -55,7 +51,6 @@ const App: React.FC = () => {
         }
       }
 
-      // Ctrl shortcuts
       if (e.ctrlKey || e.metaKey) {
         switch (e.key.toLowerCase()) {
           case 'z':
@@ -68,9 +63,7 @@ const App: React.FC = () => {
           case 'v':
             if (state.clipboard) {
               e.preventDefault();
-              const x = state.selection?.x ?? 0;
-              const y = state.selection?.y ?? 0;
-              pasteClipboard(x, y);
+              pasteClipboard(state.selection?.x ?? 0, state.selection?.y ?? 0);
             }
             return;
           case 's':
@@ -92,20 +85,12 @@ const App: React.FC = () => {
         }
       }
 
-      // Zoom
-      if (e.key === '=' || e.key === '+') {
-        setZoom(state.zoom * 1.25);
-      }
-      if (e.key === '-') {
-        setZoom(state.zoom / 1.25);
-      }
+      if (e.key === '=' || e.key === '+') setZoom(state.zoom * 1.25);
+      if (e.key === '-') setZoom(state.zoom / 1.25);
 
-      // Delete selection
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (state.selection) {
-          e.preventDefault();
-          deleteSelection();
-        }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && state.selection) {
+        e.preventDefault();
+        deleteSelection();
       }
     };
 
@@ -115,18 +100,17 @@ const App: React.FC = () => {
 
   const fitToWindow = useCallback(() => {
     if (!state.project) return;
-    const availW = window.innerWidth - 520; // sidebars
-    const availH = window.innerHeight - 80; // menu + status
+    const availW = window.innerWidth - 520;
+    const availH = window.innerHeight - 80;
     const z = Math.min(availW / state.project.pixelWidth, availH / state.project.pixelHeight);
     setZoom(z);
     setPan(0, 0);
   }, [state.project, setZoom, setPan]);
 
-  // File input handlers
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    e.target.value = ''; // Reset so same file can be selected again
+    e.target.value = '';
 
     if (file.name.endsWith('.mapstudio')) {
       loadProject(file);
@@ -135,13 +119,12 @@ const App: React.FC = () => {
 
     try {
       const img = await loadImage(file);
-      setSourceImage(img);
-      openImportDialog();
+      importImage(img);
     } catch (err) {
       console.error('Failed to load image:', err);
       alert('Failed to load image file.');
     }
-  }, [setSourceImage, openImportDialog, loadProject]);
+  }, [importImage, loadProject]);
 
   const handleProjectFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -149,28 +132,6 @@ const App: React.FC = () => {
     e.target.value = '';
     loadProject(file);
   }, [loadProject]);
-
-  const handleImport = useCallback((
-    mapWidth: number,
-    mapHeight: number,
-    sourceImageData: ImageData,
-    originalImageData: ImageData,
-    resizeAlgorithm: ResizeAlgorithm,
-  ) => {
-    if (!state.coloursData) return;
-    const settings = state.project?.conversionSettings ?? {
-      mapMode: 'flat' as const,
-      staircaseMode: 'classic' as const,
-      ditherMethod: 'none' as const,
-      resizeAlgorithm,
-      betterColour: false,
-      carpetOnly: false,
-      brightness: 0,
-      contrast: 0,
-      saturation: 0,
-    };
-    createProject(mapWidth, mapHeight, sourceImageData, originalImageData, { ...settings, resizeAlgorithm }, state.coloursData);
-  }, [state.coloursData, state.project?.conversionSettings, createProject]);
 
   const handleEyedrop = useCallback((colourSetId: number, tone: ToneVariant) => {
     setSelectedColour(colourSetId, tone);
@@ -187,7 +148,6 @@ const App: React.FC = () => {
 
   return (
     <div className="app-container">
-      {/* Hidden file inputs */}
       <input
         ref={fileInputRef}
         type="file"
@@ -203,7 +163,6 @@ const App: React.FC = () => {
         onChange={handleProjectFileSelect}
       />
 
-      {/* Menu Bar */}
       <MenuBar
         hasProject={!!state.project}
         canUndo={canUndo}
@@ -224,9 +183,7 @@ const App: React.FC = () => {
         showMapBorders={state.showMapBorders}
       />
 
-      {/* Main content */}
       <div className="app-main">
-        {/* Left sidebar */}
         <ToolPanel
           activeTool={state.activeTool}
           brushSize={state.brushSize}
@@ -237,7 +194,6 @@ const App: React.FC = () => {
           onBrushSizeChange={setBrushSize}
         />
 
-        {/* Centre — Canvas */}
         {state.project ? (
           <PixelCanvas
             project={state.project}
@@ -269,23 +225,16 @@ const App: React.FC = () => {
               Import an image to get started, or load an existing project.
             </div>
             <div className="welcome-actions">
-              <button
-                className="welcome-btn primary"
-                onClick={() => fileInputRef.current?.click()}
-              >
+              <button className="welcome-btn primary" onClick={() => fileInputRef.current?.click()}>
                 Open Image
               </button>
-              <button
-                className="welcome-btn"
-                onClick={() => projectInputRef.current?.click()}
-              >
+              <button className="welcome-btn" onClick={() => projectInputRef.current?.click()}>
                 Load Project
               </button>
             </div>
           </div>
         )}
 
-        {/* Right sidebar — tabbed */}
         <div className="right-sidebar">
           <div className="sidebar-tabs">
             <button
@@ -336,22 +285,13 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Status Bar */}
       <StatusBar
         project={state.project}
+        coloursData={state.coloursData}
         cursorX={state.cursorX}
         cursorY={state.cursorY}
         zoom={state.zoom}
       />
-
-      {/* Dialogs */}
-      {state.importDialogOpen && state.coloursData && (
-        <ImportDialog
-          sourceImage={state.sourceImage}
-          onImport={handleImport}
-          onClose={closeImportDialog}
-        />
-      )}
 
       {state.exportDialogOpen && state.project && (
         <ExportDialog

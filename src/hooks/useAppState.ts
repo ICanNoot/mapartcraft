@@ -9,7 +9,7 @@ import {
 import { buildPalette } from '../utils/colour';
 import { PaletteEntry } from '../types';
 import { applyDithering } from '../utils/dither';
-import { resizeImage, applyPreprocessing } from '../utils/imageProcessing';
+import { resizeImage, applyPreprocessing, calculateDefaultMapSize } from '../utils/imageProcessing';
 import { exportProject, bundleAsZip } from '../utils/export';
 
 const MAX_HISTORY = 100;
@@ -31,9 +31,7 @@ export interface AppState {
   clipboard: { width: number; height: number; data: Uint16Array } | null;
   palette: PaletteEntry[];
   coloursData: Record<string, any> | null;
-  importDialogOpen: boolean;
   exportDialogOpen: boolean;
-  sourceImage: HTMLImageElement | null;
   rightSidebarTab: 'palette' | 'settings';
 }
 
@@ -55,9 +53,7 @@ export function useAppState() {
     clipboard: null,
     palette: [],
     coloursData: null,
-    importDialogOpen: false,
     exportDialogOpen: false,
-    sourceImage: null,
     rightSidebarTab: 'palette',
   });
 
@@ -168,18 +164,6 @@ export function useAppState() {
     setState(prev => ({ ...prev, rightSidebarTab: tab }));
   }, []);
 
-  const openImportDialog = useCallback(() => {
-    setState(prev => ({ ...prev, importDialogOpen: true }));
-  }, []);
-
-  const closeImportDialog = useCallback(() => {
-    setState(prev => ({ ...prev, importDialogOpen: false, sourceImage: null }));
-  }, []);
-
-  const setSourceImage = useCallback((img: HTMLImageElement) => {
-    setState(prev => ({ ...prev, sourceImage: img }));
-  }, []);
-
   // Run conversion pipeline on sourceImageData with given settings
   const runConversion = useCallback((
     sourceImageData: ImageData,
@@ -222,6 +206,63 @@ export function useAppState() {
     return pixels;
   }, []);
 
+  // Import an image directly — auto-sizes, converts with current settings
+  const importImage = useCallback((img: HTMLImageElement) => {
+    setState(prev => {
+      if (!prev.coloursData) return prev;
+      const coloursData = prev.coloursData;
+
+      // If a project exists, reuse its settings; otherwise use defaults
+      const settings = prev.project?.conversionSettings ?? DEFAULT_CONVERSION_SETTINGS;
+
+      // Determine map size from image aspect ratio
+      const { mapWidth, mapHeight } = calculateDefaultMapSize(img.width, img.height);
+      const pixelWidth = mapWidth * MAP_SIZE;
+      const pixelHeight = mapHeight * MAP_SIZE;
+
+      // Resize to target dimensions
+      const sourceImageData = resizeImage(img, pixelWidth, pixelHeight, settings.resizeAlgorithm);
+
+      // Create originalImageData at full original resolution
+      const origCanvas = document.createElement('canvas');
+      origCanvas.width = img.width;
+      origCanvas.height = img.height;
+      origCanvas.getContext('2d')!.drawImage(img, 0, 0);
+      const originalImageData = origCanvas.getContext('2d')!.getImageData(0, 0, img.width, img.height);
+
+      // Run conversion
+      const pixels = runConversion(sourceImageData, pixelWidth, pixelHeight, settings, coloursData);
+      const palette = buildPalette(coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour);
+
+      const project: ProjectState = {
+        mapWidth,
+        mapHeight,
+        pixelWidth,
+        pixelHeight,
+        pixels,
+        blockChoices: prev.project?.blockChoices ?? {},
+        conversionSettings: settings,
+        sourceImageData,
+        originalImageData,
+      };
+
+      historyRef.current = [{ pixels: new Uint16Array(pixels), description: 'Initial' }];
+      historyIndexRef.current = 0;
+
+      return {
+        ...prev,
+        project,
+        palette,
+        zoom: Math.min(
+          (window.innerWidth - 520) / pixelWidth,
+          (window.innerHeight - 100) / pixelHeight
+        ),
+        panX: 0,
+        panY: 0,
+      };
+    });
+  }, [runConversion]);
+
   const createProject = useCallback((
     mapWidth: number,
     mapHeight: number,
@@ -262,8 +303,6 @@ export function useAppState() {
       ...prev,
       project,
       palette,
-      importDialogOpen: false,
-      sourceImage: null,
       zoom: Math.min(
         (window.innerWidth - 520) / pixelWidth,
         (window.innerHeight - 100) / pixelHeight
@@ -372,9 +411,34 @@ export function useAppState() {
     }
 
     const doReconvert = () => {
-      // We need to read the latest state at reconvert time
       setState(prev => {
-        if (!prev.project || !prev.project.sourceImageData || !prev.coloursData) return prev;
+        if (!prev.project || !prev.coloursData) return prev;
+
+        // If resizeAlgorithm changed, re-resize from originalImageData
+        if (key === 'resizeAlgorithm' && prev.project.originalImageData) {
+          const origImg = prev.project.originalImageData;
+          const tmpCanvas = document.createElement('canvas');
+          tmpCanvas.width = origImg.width;
+          tmpCanvas.height = origImg.height;
+          tmpCanvas.getContext('2d')!.putImageData(origImg, 0, 0);
+          const newSourceImageData = resizeImage(
+            tmpCanvas,
+            prev.project.pixelWidth,
+            prev.project.pixelHeight,
+            prev.project.conversionSettings.resizeAlgorithm
+          );
+          const settings = prev.project.conversionSettings;
+          const pixels = runConversion(newSourceImageData, prev.project.pixelWidth, prev.project.pixelHeight, settings, prev.coloursData);
+          pushHistory(pixels, `Changed resize algorithm to ${value}`);
+          const palette = buildPalette(prev.coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour);
+          return {
+            ...prev,
+            project: { ...prev.project, pixels, sourceImageData: newSourceImageData },
+            palette,
+          };
+        }
+
+        if (!prev.project.sourceImageData) return prev;
         const settings = prev.project.conversionSettings;
 
         const pixels = runConversion(
@@ -693,9 +757,7 @@ export function useAppState() {
     setColoursData,
     rebuildPalette,
     setRightSidebarTab,
-    openImportDialog,
-    closeImportDialog,
-    setSourceImage,
+    importImage,
     createProject,
     reconvert,
     resizeAndReconvert,

@@ -1,6 +1,6 @@
 // Right sidebar — colour palette panel
 
-import React, { useState, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { ToneVariant, MapMode } from '../../types';
 import { PaletteEntry } from '../../types';
 
@@ -16,8 +16,8 @@ interface PalettePanelProps {
 }
 
 interface TooltipInfo {
-  x: number;
-  y: number;
+  anchorX: number;
+  anchorY: number;
   entry: PaletteEntry;
   blockName: string;
   colourName: string;
@@ -68,15 +68,18 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
     return groups;
   }, [palette, coloursData, searchQuery]);
 
+  const tooltipRef = useRef<HTMLDivElement>(null);
+
   const handleMouseEnter = useCallback((e: React.MouseEvent, entry: PaletteEntry) => {
     if (!coloursData) return;
     const cs = coloursData[entry.colourSetId.toString()];
     if (!cs) return;
 
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const firstBlock = Object.values(cs.blocks)[0] as any;
     setTooltip({
-      x: e.clientX + 12,
-      y: e.clientY - 8,
+      anchorX: rect.left,
+      anchorY: rect.top + rect.height / 2,
       entry,
       blockName: firstBlock?.displayName || 'Unknown',
       colourName: cs.colourName || 'Unknown',
@@ -86,6 +89,35 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
   const handleMouseLeave = useCallback(() => {
     setTooltip(null);
   }, []);
+
+  // Position tooltip with viewport-aware bounds checking
+  const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({});
+  useEffect(() => {
+    if (!tooltip || !tooltipRef.current) return;
+    const el = tooltipRef.current;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const gap = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = tooltip.anchorX - w - gap;
+    let top = tooltip.anchorY - h / 2;
+
+    // If overflows left, flip to right of anchor
+    if (left < 4) {
+      left = tooltip.anchorX + 24 + gap;
+    }
+    // If overflows right after flip, clamp
+    if (left + w > vw - 4) {
+      left = vw - w - 4;
+    }
+    // Clamp vertical
+    if (top < 4) top = 4;
+    if (top + h > vh - 4) top = vh - h - 4;
+
+    setTooltipStyle({ left, top, visibility: 'visible' });
+  }, [tooltip]);
 
   return (
     <div className="palette-panel-content">
@@ -130,11 +162,6 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
                 onClick={() => onSelectColour(entry.colourSetId, entry.tone)}
                 onMouseEnter={e => handleMouseEnter(e, entry)}
                 onMouseLeave={handleMouseLeave}
-                onMouseMove={e => {
-                  if (tooltip) {
-                    setTooltip(prev => prev ? { ...prev, x: e.clientX + 12, y: e.clientY - 8 } : null);
-                  }
-                }}
               />
             );
           })
@@ -143,15 +170,15 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
 
       {tooltip && (
         <div
+          ref={tooltipRef}
           className="palette-tooltip"
-          style={{ left: tooltip.x, top: tooltip.y }}
+          style={{ ...tooltipStyle, visibility: tooltipStyle.visibility as any || 'hidden' }}
         >
           <div className="tt-name">{tooltip.blockName}</div>
           <div>{tooltip.colourName} ({tooltip.entry.tone})</div>
           <div className="tt-rgb">
             RGB({tooltip.entry.rgb[0]}, {tooltip.entry.rgb[1]}, {tooltip.entry.rgb[2]})
           </div>
-          <div className="tt-rgb">ID: {tooltip.entry.colourSetId}</div>
         </div>
       )}
     </div>  );

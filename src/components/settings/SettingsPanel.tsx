@@ -2,7 +2,7 @@
 
 import React from 'react';
 import {
-  ConversionSettings, MapMode, StaircaseMode, DitherMethod,
+  ConversionSettings, MapMode, StaircaseMode, DitherMethod, ResizeAlgorithm,
 } from '../../types';
 import supportedVersions from '../../data/supportedVersions.json';
 
@@ -101,6 +101,22 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </select>
           </div>
         )}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Resize</div>
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="form-label">Resize Algorithm</label>
+          <select
+            className="form-select"
+            value={settings.resizeAlgorithm}
+            onChange={e => onSettingChange('resizeAlgorithm', e.target.value as ResizeAlgorithm)}
+          >
+            <option value="nearest">Nearest Neighbour</option>
+            <option value="bilinear">Bilinear</option>
+            <option value="lanczos">Lanczos</option>
+          </select>
+        </div>
       </div>
 
       <div className="settings-section">

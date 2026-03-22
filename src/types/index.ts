@@ -52,6 +52,7 @@ export type StaircaseMode = 'classic' | 'valley' | 'full_dark' | 'full_light';
 export type DitherMethod = 'none' | 'floyd_steinberg' | 'bayer_4x4' | 'bayer_2x2' | 'ordered_3x3' | 'minavgerr' | 'burkes' | 'sierra_lite' | 'stucki' | 'atkinson';
 export type ResizeAlgorithm = 'nearest' | 'bilinear' | 'lanczos';
 export type SupportBlockMode = 'none' | 'important_only' | 'all_optimized' | 'all_double_optimized';
+export type CanvasBackground = 'checkerboard' | 'white' | 'mid_grey' | 'dark_grey' | 'black' | 'custom';
 
 export type ToolType = 'pencil' | 'eraser' | 'eyedropper' | 'fill' | 'selection';
 
@@ -65,6 +66,10 @@ export interface ConversionSettings {
   brightness: number;
   contrast: number;
   saturation: number;
+  transparencyEnabled: boolean;
+  transparencyThreshold: number; // 0-255, pixels with alpha below this → EMPTY_PIXEL
+  canvasBackground: CanvasBackground;
+  customBackgroundColour: string; // hex colour for custom background
 }
 
 export interface ProjectState {
@@ -121,6 +126,10 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   brightness: 0,
   contrast: 0,
   saturation: 0,
+  transparencyEnabled: true,
+  transparencyThreshold: 128,
+  canvasBackground: 'checkerboard',
+  customBackgroundColour: '#ff00ff',
 };
 
 export type ExportFormat = 'schematic' | 'mapdat';

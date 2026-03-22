@@ -2,9 +2,25 @@
 
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import {
-  ProjectState, ToolType, ToneVariant, SelectionRect,
+  ProjectState, ToolType, ToneVariant, SelectionRect, CanvasBackground,
   MAP_SIZE, EMPTY_PIXEL, encodePixel, decodePixel,
 } from '../../types';
+
+const BACKGROUND_COLOURS: Record<string, [number, number, number]> = {
+  white: [255, 255, 255],
+  mid_grey: [128, 128, 128],
+  dark_grey: [64, 64, 64],
+  black: [0, 0, 0],
+};
+
+function parseHexColour(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  return [
+    parseInt(h.substring(0, 2), 16) || 0,
+    parseInt(h.substring(2, 4), 16) || 0,
+    parseInt(h.substring(4, 6), 16) || 0,
+  ];
+}
 
 interface PixelCanvasProps {
   project: ProjectState;
@@ -19,6 +35,8 @@ interface PixelCanvasProps {
   selectedColourSetId: number;
   selectedTone: ToneVariant;
   selection: SelectionRect | null;
+  canvasBackground: CanvasBackground;
+  customBackgroundColour: string;
   onZoomChange: (zoom: number) => void;
   onPanChange: (x: number, y: number) => void;
   onCursorChange: (x: number, y: number) => void;
@@ -33,6 +51,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
   project, coloursData, zoom, panX, panY,
   showGrid, showMapBorders, activeTool, brushSize,
   selectedColourSetId, selectedTone, selection,
+  canvasBackground, customBackgroundColour,
   onZoomChange, onPanChange, onCursorChange,
   onPixelsBatch, onCommitPixels, onFill, onEyedrop,
   onSelectionChange,
@@ -74,7 +93,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
   // Mark for redraw when relevant state changes
   useEffect(() => {
     needsRedraw.current = true;
-  }, [project.pixels, zoom, panX, panY, showGrid, showMapBorders, selection]);
+  }, [project.pixels, zoom, panX, panY, showGrid, showMapBorders, selection, canvasBackground, customBackgroundColour]);
 
   // Main render loop
   useEffect(() => {
@@ -125,19 +144,43 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
         const imgData = ctx.createImageData(imgW, imgH);
         const data = imgData.data;
 
+        // Compute background colours for empty pixels
+        const isCheckerboard = canvasBackground === 'checkerboard';
+        // Checkerboard: 8x8 screen-pixel squares, so size in map-pixels depends on zoom
+        const checkerSize = Math.max(1, Math.round(8 / zoom));
+        let bgR = 17, bgG = 17, bgB = 34;
+        if (!isCheckerboard) {
+          if (canvasBackground === 'custom') {
+            const [cr, cg, cb] = parseHexColour(customBackgroundColour);
+            bgR = cr; bgG = cg; bgB = cb;
+          } else if (BACKGROUND_COLOURS[canvasBackground]) {
+            [bgR, bgG, bgB] = BACKGROUND_COLOURS[canvasBackground];
+          }
+        }
+
         for (let py = 0; py < imgH; py++) {
           for (let px = 0; px < imgW; px++) {
             const encoded = pixels[(startPxY + py) * pixelWidth + (startPxX + px)];
             const idx = (py * imgW + px) * 4;
             if (encoded === EMPTY_PIXEL) {
-              data[idx] = 17; data[idx + 1] = 17; data[idx + 2] = 34; data[idx + 3] = 255;
+              if (isCheckerboard) {
+                const cx = Math.floor((startPxX + px) / checkerSize);
+                const cy = Math.floor((startPxY + py) / checkerSize);
+                const light = (cx + cy) % 2 === 0;
+                data[idx] = light ? 204 : 153;
+                data[idx + 1] = light ? 204 : 153;
+                data[idx + 2] = light ? 204 : 153;
+              } else {
+                data[idx] = bgR; data[idx + 1] = bgG; data[idx + 2] = bgB;
+              }
+              data[idx + 3] = 255;
               continue;
             }
             const rgb = lookup.get(encoded);
             if (rgb) {
               data[idx] = rgb[0]; data[idx + 1] = rgb[1]; data[idx + 2] = rgb[2]; data[idx + 3] = 255;
             } else {
-              data[idx] = 17; data[idx + 1] = 17; data[idx + 2] = 34; data[idx + 3] = 255;
+              data[idx] = bgR; data[idx + 1] = bgG; data[idx + 2] = bgB; data[idx + 3] = 255;
             }
           }
         }
@@ -228,7 +271,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
 
     rafId.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(rafId.current);
-  }, [project, zoom, panX, panY, showGrid, showMapBorders, selection, coloursData]);
+  }, [project, zoom, panX, panY, showGrid, showMapBorders, selection, coloursData, canvasBackground, customBackgroundColour]);
 
   // Convert screen coords to pixel coords
   const screenToPixel = useCallback((clientX: number, clientY: number): { x: number; y: number } => {

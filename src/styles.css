@@ -635,6 +635,16 @@ html, body, #root {
   flex: 1;
 }
 
+.form-colour-picker {
+  width: 100%;
+  height: 32px;
+  padding: 2px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
 .form-slider {
   width: 100%;
   accent-color: var(--accent);

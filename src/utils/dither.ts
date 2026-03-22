@@ -87,13 +87,17 @@ const ORDERED_3X3 = [
  * Apply dithering to image data and return palette-mapped result.
  * imageData: RGBA flat array (width*height*4)
  */
+const TRANSPARENT_PIXEL = { colourSetId: -1, tone: 'normal' };
+
 export function applyDithering(
   imageData: Uint8ClampedArray,
   width: number,
   height: number,
   palette: PaletteEntry[],
   method: DitherMethod,
-  useLab: boolean
+  useLab: boolean,
+  transparencyEnabled: boolean = false,
+  transparencyThreshold: number = 128,
 ): { colourSetId: number; tone: string }[] {
   const result: { colourSetId: number; tone: string }[] = new Array(width * height);
 
@@ -102,6 +106,10 @@ export function applyDithering(
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (y * width + x) * 4;
+        if (transparencyEnabled && imageData[idx + 3] < transparencyThreshold) {
+          result[y * width + x] = TRANSPARENT_PIXEL;
+          continue;
+        }
         const r = imageData[idx];
         const g = imageData[idx + 1];
         const b = imageData[idx + 2];
@@ -124,6 +132,10 @@ export function applyDithering(
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (y * width + x) * 4;
+        if (transparencyEnabled && imageData[idx + 3] < transparencyThreshold) {
+          result[y * width + x] = TRANSPARENT_PIXEL;
+          continue;
+        }
         const r = imageData[idx];
         const g = imageData[idx + 1];
         const b = imageData[idx + 2];
@@ -176,6 +188,10 @@ export function applyDithering(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
+      if (transparencyEnabled && imageData[i * 4 + 3] < transparencyThreshold) {
+        result[i] = TRANSPARENT_PIXEL;
+        continue;
+      }
       const r = Math.max(0, Math.min(255, rBuf[i]));
       const g = Math.max(0, Math.min(255, gBuf[i]));
       const b = Math.max(0, Math.min(255, bBuf[i]));

@@ -10,8 +10,9 @@ import { SettingsPanel } from './components/settings/SettingsPanel';
 import { MaterialsPanel } from './components/materials/MaterialsPanel';
 import { StatusBar } from './components/statusbar/StatusBar';
 import { ExportDialog } from './components/dialogs/ExportDialog';
+import { NewProjectDialog } from './components/dialogs/NewProjectDialog';
 import { loadImage } from './utils/imageProcessing';
-import { ToneVariant } from './types';
+import { ToneVariant, DEFAULT_CONVERSION_SETTINGS } from './types';
 
 import coloursJSON from './data/coloursJSON.json';
 
@@ -20,7 +21,7 @@ const App: React.FC = () => {
     state, setTool, setBrushSize, setSelectedColour,
     setZoom, setPan, setCursor, toggleGrid, toggleMapBorders,
     setColoursData, rebuildPalette, setRightSidebarTab,
-    importImage, updateConversionSetting, resizeAndReconvert,
+    importImage, createProject, updateConversionSetting, resizeAndReconvert,
     setPixelsBatch, commitPixels, fillArea,
     undo, redo, canUndo, canRedo,
     setSelection, copySelection, pasteClipboard,
@@ -32,6 +33,7 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
 
   // Load colour data on mount
   useEffect(() => {
@@ -211,6 +213,12 @@ const App: React.FC = () => {
     resizeAndReconvert(newMapWidth, newMapHeight);
   }, [resizeAndReconvert]);
 
+  const handleNewBlankProject = useCallback((mapWidth: number, mapHeight: number) => {
+    if (!state.coloursData) return;
+    createProject(mapWidth, mapHeight, null, null, DEFAULT_CONVERSION_SETTINGS, state.coloursData);
+    setShowNewProjectDialog(false);
+  }, [state.coloursData, createProject]);
+
   return (
     <div
       className="app-container"
@@ -244,6 +252,7 @@ const App: React.FC = () => {
         canUndo={canUndo}
         canRedo={canRedo}
         onNewProject={() => fileInputRef.current?.click()}
+        onNewBlankProject={() => setShowNewProjectDialog(true)}
         onOpenImage={() => fileInputRef.current?.click()}
         onSaveProject={saveProject}
         onLoadProject={() => projectInputRef.current?.click()}
@@ -284,6 +293,8 @@ const App: React.FC = () => {
             selectedColourSetId={state.selectedColourSetId}
             selectedTone={state.selectedTone}
             selection={state.selection}
+            canvasBackground={state.project.conversionSettings.canvasBackground}
+            customBackgroundColour={state.project.conversionSettings.customBackgroundColour}
             onZoomChange={setZoom}
             onPanChange={setPan}
             onCursorChange={setCursor}
@@ -301,6 +312,9 @@ const App: React.FC = () => {
               Import an image to get started, or load an existing project.
             </div>
             <div className="welcome-actions">
+              <button className="welcome-btn primary" onClick={() => setShowNewProjectDialog(true)}>
+                New Project
+              </button>
               <button className="welcome-btn primary" onClick={() => fileInputRef.current?.click()}>
                 Open Image
               </button>
@@ -376,17 +390,7 @@ const App: React.FC = () => {
             />
           ) : state.rightSidebarTab === 'settings' ? (
             <SettingsPanel
-              settings={state.project?.conversionSettings ?? {
-                mapMode: 'flat',
-                staircaseMode: 'classic',
-                ditherMethod: 'none',
-                resizeAlgorithm: 'bilinear',
-                betterColour: false,
-                carpetOnly: false,
-                brightness: 0,
-                contrast: 0,
-                saturation: 0,
-              }}
+              settings={state.project?.conversionSettings ?? DEFAULT_CONVERSION_SETTINGS}
               hasSourceImage={!!state.project?.sourceImageData}
               mapWidth={state.project?.mapWidth ?? 1}
               mapHeight={state.project?.mapHeight ?? 1}
@@ -418,6 +422,13 @@ const App: React.FC = () => {
             closeExportDialog();
           }}
           onClose={closeExportDialog}
+        />
+      )}
+
+      {showNewProjectDialog && (
+        <NewProjectDialog
+          onConfirm={handleNewBlankProject}
+          onClose={() => setShowNewProjectDialog(false)}
         />
       )}
     </div>

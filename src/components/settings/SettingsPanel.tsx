@@ -2,7 +2,7 @@
 
 import React from 'react';
 import {
-  ConversionSettings, MapMode, StaircaseMode, DitherMethod, ResizeAlgorithm,
+  ConversionSettings, MapMode, StaircaseMode, DitherMethod, ResizeAlgorithm, CanvasBackground,
 } from '../../types';
 import supportedVersions from '../../data/supportedVersions.json';
 
@@ -212,6 +212,69 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             <span className="slider-value">{settings.saturation}</span>
           </div>
         </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Transparency</div>
+
+        <div className="form-group">
+          <label className="form-checkbox">
+            <input
+              type="checkbox"
+              checked={settings.transparencyEnabled}
+              onChange={e => onSettingChange('transparencyEnabled', e.target.checked)}
+            />
+            Preserve Transparency
+          </label>
+        </div>
+
+        {settings.transparencyEnabled && (
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">Alpha Threshold</label>
+            <div className="slider-row">
+              <input
+                type="range"
+                className="form-slider"
+                min={0}
+                max={255}
+                value={settings.transparencyThreshold}
+                onChange={e => onSettingChange('transparencyThreshold', parseInt(e.target.value), true)}
+              />
+              <span className="slider-value">{settings.transparencyThreshold}</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Canvas Background</div>
+
+        <div className="form-group" style={{ marginBottom: settings.canvasBackground === 'custom' ? 8 : 0 }}>
+          <select
+            className="form-select"
+            value={settings.canvasBackground}
+            onChange={e => onSettingChange('canvasBackground', e.target.value as CanvasBackground)}
+          >
+            <option value="checkerboard">Checkerboard</option>
+            <option value="white">White</option>
+            <option value="mid_grey">Mid Grey</option>
+            <option value="dark_grey">Dark Grey</option>
+            <option value="black">Black</option>
+            <option value="custom">Custom...</option>
+          </select>
+        </div>
+
+        {settings.canvasBackground === 'custom' && (
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">Custom Colour</label>
+            <input
+              type="color"
+              className="form-colour-picker"
+              value={settings.customBackgroundColour}
+              onChange={e => onSettingChange('customBackgroundColour', e.target.value)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

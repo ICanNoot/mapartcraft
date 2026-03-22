@@ -7,6 +7,7 @@ interface MenuBarProps {
   canUndo: boolean;
   canRedo: boolean;
   onNewProject: () => void;
+  onNewBlankProject: () => void;
   onOpenImage: () => void;
   onSaveProject: () => void;
   onLoadProject: () => void;
@@ -33,7 +34,7 @@ interface MenuItem {
 
 export const MenuBar: React.FC<MenuBarProps> = ({
   hasProject, canUndo, canRedo,
-  onNewProject, onOpenImage, onSaveProject, onLoadProject,
+  onNewProject, onNewBlankProject, onOpenImage, onSaveProject, onLoadProject,
   onExport, onUndo, onRedo, onZoomIn, onZoomOut, onFitToWindow,
   onToggleGrid, onToggleMapBorders, showGrid, showMapBorders,
 }) => {
@@ -42,6 +43,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
 
   const menus: Record<string, MenuItem[]> = {
     File: [
+      { label: 'New Project...', action: onNewBlankProject },
       { label: 'Open Image...', shortcut: 'Ctrl+O', action: onOpenImage },
       { label: 'separator', separator: true },
       { label: 'Save Project', shortcut: 'Ctrl+S', action: onSaveProject, disabled: !hasProject },

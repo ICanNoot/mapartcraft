@@ -215,7 +215,9 @@ export function useAppState() {
       pixelHeight,
       palette,
       settings.ditherMethod,
-      settings.betterColour
+      settings.betterColour,
+      settings.transparencyEnabled,
+      settings.transparencyThreshold
     );
 
     for (let i = 0; i < result.length; i++) {

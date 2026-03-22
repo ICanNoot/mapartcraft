@@ -49,6 +49,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
   const spaceHeld = useRef(false);
   const rafId = useRef<number>(0);
   const needsRedraw = useRef(true);
+  const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Precompute colour lookup from coloursData
   const colourLookup = useRef<Map<number, [number, number, number]>>(new Map());
@@ -116,65 +117,48 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       const endPxX = Math.min(pixelWidth, Math.ceil((cw - offsetX) / zoom));
       const endPxY = Math.min(pixelHeight, Math.ceil((ch - offsetY) / zoom));
 
-      // Draw pixels
+      // Draw pixels using ImageData buffer at all zoom levels
       const lookup = colourLookup.current;
-      if (zoom >= 2) {
-        // Draw individual pixels
-        for (let py = startPxY; py < endPxY; py++) {
-          for (let px = startPxX; px < endPxX; px++) {
-            const encoded = pixels[py * pixelWidth + px];
-            if (encoded === EMPTY_PIXEL) continue;
+      const imgW = endPxX - startPxX;
+      const imgH = endPxY - startPxY;
+      if (imgW > 0 && imgH > 0) {
+        const imgData = ctx.createImageData(imgW, imgH);
+        const data = imgData.data;
 
+        for (let py = 0; py < imgH; py++) {
+          for (let px = 0; px < imgW; px++) {
+            const encoded = pixels[(startPxY + py) * pixelWidth + (startPxX + px)];
+            const idx = (py * imgW + px) * 4;
+            if (encoded === EMPTY_PIXEL) {
+              data[idx] = 17; data[idx + 1] = 17; data[idx + 2] = 34; data[idx + 3] = 255;
+              continue;
+            }
             const rgb = lookup.get(encoded);
-            if (!rgb) continue;
-
-            const sx = Math.floor(offsetX + px * zoom);
-            const sy = Math.floor(offsetY + py * zoom);
-            const sw = Math.ceil(zoom);
-            const sh = Math.ceil(zoom);
-
-            ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-            ctx.fillRect(sx, sy, sw, sh);
-          }
-        }
-      } else {
-        // For very zoomed out views, render to an ImageData
-        const imgW = endPxX - startPxX;
-        const imgH = endPxY - startPxY;
-        if (imgW > 0 && imgH > 0) {
-          const imgData = ctx.createImageData(imgW, imgH);
-          const data = imgData.data;
-
-          for (let py = 0; py < imgH; py++) {
-            for (let px = 0; px < imgW; px++) {
-              const encoded = pixels[(startPxY + py) * pixelWidth + (startPxX + px)];
-              const idx = (py * imgW + px) * 4;
-              if (encoded === EMPTY_PIXEL) {
-                data[idx] = 17; data[idx + 1] = 17; data[idx + 2] = 34; data[idx + 3] = 255;
-                continue;
-              }
-              const rgb = lookup.get(encoded);
-              if (rgb) {
-                data[idx] = rgb[0]; data[idx + 1] = rgb[1]; data[idx + 2] = rgb[2]; data[idx + 3] = 255;
-              } else {
-                data[idx] = 17; data[idx + 1] = 17; data[idx + 2] = 34; data[idx + 3] = 255;
-              }
+            if (rgb) {
+              data[idx] = rgb[0]; data[idx + 1] = rgb[1]; data[idx + 2] = rgb[2]; data[idx + 3] = 255;
+            } else {
+              data[idx] = 17; data[idx + 1] = 17; data[idx + 2] = 34; data[idx + 3] = 255;
             }
           }
+        }
 
-          // Draw scaled
-          const tempCanvas = document.createElement('canvas');
+        // Reuse cached temp canvas, only resize when needed
+        if (!tempCanvasRef.current) {
+          tempCanvasRef.current = document.createElement('canvas');
+        }
+        const tempCanvas = tempCanvasRef.current;
+        if (tempCanvas.width !== imgW || tempCanvas.height !== imgH) {
           tempCanvas.width = imgW;
           tempCanvas.height = imgH;
-          tempCanvas.getContext('2d')!.putImageData(imgData, 0, 0);
-
-          ctx.imageSmoothingEnabled = false;
-          const dx = Math.floor(offsetX + startPxX * zoom);
-          const dy = Math.floor(offsetY + startPxY * zoom);
-          const dw = Math.ceil(imgW * zoom);
-          const dh = Math.ceil(imgH * zoom);
-          ctx.drawImage(tempCanvas, dx, dy, dw, dh);
         }
+        tempCanvas.getContext('2d')!.putImageData(imgData, 0, 0);
+
+        ctx.imageSmoothingEnabled = false;
+        const dx = Math.floor(offsetX + startPxX * zoom);
+        const dy = Math.floor(offsetY + startPxY * zoom);
+        const dw = Math.ceil(imgW * zoom);
+        const dh = Math.ceil(imgH * zoom);
+        ctx.drawImage(tempCanvas, dx, dy, dw, dh);
       }
 
       // Draw canvas border
@@ -185,8 +169,8 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
         Math.ceil(pixelWidth * zoom), Math.ceil(pixelHeight * zoom)
       );
 
-      // Grid lines (only at zoom >= 4)
-      if (showGrid && zoom >= 4) {
+      // Grid lines (only at zoom >= 8 to avoid excessive line count at lower zooms)
+      if (showGrid && zoom >= 8) {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -371,12 +355,8 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     const { x: px, y: py } = screenToPixel(e.clientX, e.clientY);
     onCursorChange(px, py);
 
-    // Draw cursor highlight on overlay
-    const overlay = overlayRef.current;
-    const container = containerRef.current;
-    if (overlay && container && px >= 0 && px < project.pixelWidth && py >= 0 && py < project.pixelHeight) {
-      needsRedraw.current = true; // Trigger redraw for cursor
-    }
+    // Note: cursor highlight drawing is not implemented in the render loop,
+    // so we don't trigger a full redraw on every mouse move.
 
     if (isPanning.current) {
       const dx = e.clientX - lastPanPos.current.x;

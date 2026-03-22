@@ -3,9 +3,9 @@
 import JSZip from 'jszip';
 import {
   ProjectState, ExportSettings, ToneVariant, SupportBlockMode,
-  MAP_SIZE, DATA_VERSION_1_20, EMPTY_PIXEL, decodePixel,
+  MAP_SIZE, DATA_VERSION_1_20, EMPTY_PIXEL, decodePixel, MaterialEntry,
 } from '../types';
-import { BlockEntry, StructureData, writeStructureNBT, compressNBT } from './nbt';
+import { BlockEntry, StructureData, writeStructureNBT, writeMapDatNBT, compressNBT } from './nbt';
 
 interface ColourData {
   blocks: Record<string, {
@@ -422,6 +422,146 @@ export async function exportProject(
   }
 
   return results;
+}
+
+/**
+ * Export the project as map.dat file(s)
+ */
+export async function exportMapDat(
+  project: ProjectState,
+  coloursData: Record<string, any>,
+  settings: ExportSettings
+): Promise<{ filename: string; data: Uint8Array }[]> {
+  const results: { filename: string; data: Uint8Array }[] = [];
+
+  for (let my = 0; my < project.mapHeight; my++) {
+    for (let mx = 0; mx < project.mapWidth; mx++) {
+      const colors = new Uint8Array(16384); // 128x128
+
+      for (let z = 0; z < MAP_SIZE; z++) {
+        for (let x = 0; x < MAP_SIZE; x++) {
+          const globalX = mx * MAP_SIZE + x;
+          const globalY = my * MAP_SIZE + z;
+          if (globalX >= project.pixelWidth || globalY >= project.pixelHeight) continue;
+
+          const encoded = project.pixels[globalY * project.pixelWidth + globalX];
+          if (encoded === EMPTY_PIXEL) {
+            colors[z * 128 + x] = 0; // transparent
+            continue;
+          }
+
+          const decoded = decodePixel(encoded);
+          if (!decoded) {
+            colors[z * 128 + x] = 0;
+            continue;
+          }
+
+          const cs = coloursData[decoded.colourSetId.toString()];
+          if (!cs || cs.mapdatId === undefined) {
+            colors[z * 128 + x] = 0;
+            continue;
+          }
+
+          // mapColorId = baseMapdatId * 4 + toneOffset
+          const toneOffset = decoded.tone === 'dark' ? 0
+            : decoded.tone === 'normal' ? 1
+            : decoded.tone === 'light' ? 2
+            : 3; // unobtainable
+          colors[z * 128 + x] = cs.mapdatId * 4 + toneOffset;
+        }
+      }
+
+      const mapId = settings.startingMapId + my * project.mapWidth + mx;
+      const nbtData = writeMapDatNBT(colors, DATA_VERSION_1_20);
+      const compressed = compressNBT(nbtData);
+      results.push({
+        filename: `map_${mapId}.dat`,
+        data: compressed,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Calculate materials list from project pixel data
+ */
+export function calculateMaterials(
+  project: ProjectState,
+  coloursData: Record<string, any>,
+  supportBlockMode: SupportBlockMode,
+  supportBlockType: string,
+  version: string
+): MaterialEntry[] {
+  const counts = new Map<string, MaterialEntry>();
+
+  for (let i = 0; i < project.pixels.length; i++) {
+    const encoded = project.pixels[i];
+    if (encoded === EMPTY_PIXEL) continue;
+
+    const decoded = decodePixel(encoded);
+    if (!decoded) continue;
+
+    const cs = coloursData[decoded.colourSetId.toString()];
+    if (!cs) continue;
+
+    const blockIdx = project.blockChoices[decoded.colourSetId] ?? 0;
+    const block = cs.blocks[blockIdx.toString()];
+    if (!block) continue;
+
+    const blockName = block.displayName || 'Unknown';
+    const nbtInfo = resolveBlockNBT(block, version);
+    const nbtName = nbtInfo?.nbtName || 'unknown';
+    const key = `${decoded.colourSetId}_${blockIdx}`;
+
+    if (counts.has(key)) {
+      counts.get(key)!.count++;
+    } else {
+      counts.set(key, { blockName, nbtName, count: 1, colourSetId: decoded.colourSetId });
+    }
+
+    // Count support blocks
+    if (supportBlockMode !== 'none') {
+      const needSupport =
+        supportBlockMode === 'all_optimized' ||
+        supportBlockMode === 'all_double_optimized' ||
+        (supportBlockMode === 'important_only' && block.supportBlockMandatory);
+
+      if (needSupport) {
+        const supportKey = `support_${supportBlockType}`;
+        const mult = supportBlockMode === 'all_double_optimized' ? 2 : 1;
+        if (counts.has(supportKey)) {
+          counts.get(supportKey)!.count += mult;
+        } else {
+          counts.set(supportKey, {
+            blockName: supportBlockType.charAt(0).toUpperCase() + supportBlockType.slice(1),
+            nbtName: supportBlockType,
+            count: mult,
+            colourSetId: -1,
+          });
+        }
+      }
+    }
+  }
+
+  // Add noobline blocks for staircase mode
+  if (project.conversionSettings.mapMode === 'staircase') {
+    const nooblineCount = project.pixelWidth; // 128 per map width
+    const supportKey = `noobline_${supportBlockType}`;
+    if (counts.has(`support_${supportBlockType}`)) {
+      counts.get(`support_${supportBlockType}`)!.count += nooblineCount;
+    } else {
+      counts.set(supportKey, {
+        blockName: `${supportBlockType.charAt(0).toUpperCase() + supportBlockType.slice(1)} (noobline)`,
+        nbtName: supportBlockType,
+        count: nooblineCount,
+        colourSetId: -1,
+      });
+    }
+  }
+
+  return Array.from(counts.values()).sort((a, b) => b.count - a.count);
 }
 
 /**

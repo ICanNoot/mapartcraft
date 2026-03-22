@@ -131,9 +131,11 @@ export function buildPalette(
   coloursData: Record<string, any>,
   mapMode: 'flat' | 'staircase',
   carpetOnly: boolean,
-  computeLab: boolean
+  computeLab: boolean,
+  disabledColourSets?: number[]
 ): PaletteEntry[] {
   const palette: PaletteEntry[] = [];
+  const disabledSet = disabledColourSets ? new Set(disabledColourSets) : null;
 
   // Carpet colour set IDs (0-indexed keys in coloursJSON that correspond to carpet blocks)
   const carpetSetIds = new Set<number>();
@@ -156,6 +158,7 @@ export function buildPalette(
     const cs = colourSet as any;
 
     if (carpetOnly && !carpetSetIds.has(csId)) continue;
+    if (disabledSet && disabledSet.has(csId)) continue;
 
     const tones: ToneVariant[] = mapMode === 'flat'
       ? ['normal']
@@ -180,4 +183,19 @@ export function buildPalette(
   }
 
   return palette;
+}
+
+/**
+ * Find the carpet block index for a colour set, if it has one
+ */
+export function findCarpetBlockIndex(cs: any): number | null {
+  const blocks = Object.entries(cs.blocks);
+  for (const [idx, block] of blocks) {
+    const b = block as any;
+    if (b.displayName && b.displayName.toLowerCase().includes('carpet') &&
+        !b.displayName.toLowerCase().includes('moss')) {
+      return parseInt(idx);
+    }
+  }
+  return null;
 }

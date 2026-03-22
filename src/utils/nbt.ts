@@ -206,6 +206,48 @@ export function writeStructureNBT(data: StructureData): Uint8Array {
 }
 
 /**
+ * Write a Minecraft map.dat NBT file for a 128x128 map region
+ */
+export function writeMapDatNBT(
+  colors: Uint8Array, // 16384 bytes (128x128 map colour IDs)
+  dataVersion: number
+): Uint8Array {
+  const writer = new NBTWriter();
+
+  // Root compound (unnamed)
+  writer.writeTagHeader(TAG_COMPOUND, '');
+
+  // "data" compound
+  writer.writeTagHeader(TAG_COMPOUND, 'data');
+
+  writer.writeByteTag('scale', 0);
+  writer.writeStringTag('dimension', 'minecraft:overworld');
+  writer.writeByteTag('unlimitedTracking', 0);
+  writer.writeByteTag('trackingPosition', 0);
+  writer.writeByteTag('locked', 1);
+  writer.writeShortTag('height', 128);
+  writer.writeShortTag('width', 128);
+  writer.writeIntTag('xCenter', 0);
+  writer.writeIntTag('zCenter', 0);
+
+  // colors — TAG_ByteArray
+  writer.writeTagHeader(TAG_BYTE_ARRAY, 'colors');
+  writer.writeInt(colors.length);
+  for (let i = 0; i < colors.length; i++) {
+    writer.writeByte(colors[i]);
+  }
+
+  writer.writeByte(TAG_END); // end "data" compound
+
+  // DataVersion
+  writer.writeIntTag('DataVersion', dataVersion);
+
+  writer.writeByte(TAG_END); // end root compound
+
+  return writer.toUint8Array();
+}
+
+/**
  * Compress NBT data with gzip
  */
 export function compressNBT(data: Uint8Array): Uint8Array {

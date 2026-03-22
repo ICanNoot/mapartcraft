@@ -1,18 +1,18 @@
 // MapArt Studio — Main Application Component
 
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useAppState } from './hooks/useAppState';
 import { MenuBar } from './components/menubar/MenuBar';
 import { ToolPanel } from './components/tools/ToolPanel';
 import { PixelCanvas } from './components/canvas/PixelCanvas';
 import { PalettePanel } from './components/palette/PalettePanel';
 import { SettingsPanel } from './components/settings/SettingsPanel';
+import { MaterialsPanel } from './components/materials/MaterialsPanel';
 import { StatusBar } from './components/statusbar/StatusBar';
 import { ExportDialog } from './components/dialogs/ExportDialog';
 import { loadImage } from './utils/imageProcessing';
 import { ToneVariant } from './types';
 
-// Import colour data - will be bundled by Vite
 import coloursJSON from './data/coloursJSON.json';
 
 const App: React.FC = () => {
@@ -25,11 +25,13 @@ const App: React.FC = () => {
     undo, redo, canUndo, canRedo,
     setSelection, copySelection, pasteClipboard,
     deleteSelection, openExportDialog, closeExportDialog,
-    doExport, saveProject, loadProject,
+    doExport, saveProject, loadProject, setBlockChoice,
+    toggleColourSet, enableAllColourSets, disableAllColourSets,
   } = useAppState();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   // Load colour data on mount
   useEffect(() => {
@@ -61,9 +63,12 @@ const App: React.FC = () => {
             if (state.selection) { e.preventDefault(); copySelection(); }
             return;
           case 'v':
+            e.preventDefault();
             if (state.clipboard) {
-              e.preventDefault();
               pasteClipboard(state.selection?.x ?? 0, state.selection?.y ?? 0);
+            } else {
+              // Try clipboard image paste
+              handleClipboardPaste();
             }
             return;
           case 's':
@@ -97,6 +102,26 @@ const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [state.zoom, state.selection, state.clipboard, state.project, setTool, undo, redo, copySelection, pasteClipboard, deleteSelection, saveProject, openExportDialog, setZoom]);
+
+  // Clipboard image paste
+  const handleClipboardPaste = useCallback(async () => {
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        for (const type of item.types) {
+          if (type.startsWith('image/')) {
+            const blob = await item.getType(type);
+            const file = new File([blob], 'clipboard.png', { type });
+            const img = await loadImage(file);
+            importImage(img);
+            return;
+          }
+        }
+      }
+    } catch {
+      // Clipboard API not available or permission denied — ignore
+    }
+  }, [importImage]);
 
   const fitToWindow = useCallback(() => {
     if (!state.project) return;
@@ -133,6 +158,46 @@ const App: React.FC = () => {
     loadProject(file);
   }, [loadProject]);
 
+  // Drag and drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set false if leaving the app container
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    if (e.clientX <= rect.left || e.clientX >= rect.right || e.clientY <= rect.top || e.clientY >= rect.bottom) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+
+    if (file.name.endsWith('.mapstudio')) {
+      loadProject(file);
+      return;
+    }
+
+    if (file.type.startsWith('image/')) {
+      try {
+        const img = await loadImage(file);
+        importImage(img);
+      } catch (err) {
+        console.error('Failed to load dropped image:', err);
+      }
+    }
+  }, [importImage, loadProject]);
+
   const handleEyedrop = useCallback((colourSetId: number, tone: ToneVariant) => {
     setSelectedColour(colourSetId, tone);
     setTool('pencil');
@@ -147,7 +212,12 @@ const App: React.FC = () => {
   }, [resizeAndReconvert]);
 
   return (
-    <div className="app-container">
+    <div
+      className="app-container"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <input
         ref={fileInputRef}
         type="file"
@@ -162,6 +232,12 @@ const App: React.FC = () => {
         style={{ display: 'none' }}
         onChange={handleProjectFileSelect}
       />
+
+      {isDragOver && (
+        <div className="drop-overlay">
+          <div className="drop-overlay-text">Drop image or project file here</div>
+        </div>
+      )}
 
       <MenuBar
         hasProject={!!state.project}
@@ -232,6 +308,30 @@ const App: React.FC = () => {
                 Load Project
               </button>
             </div>
+            {state.recentProjects.length > 0 && (
+              <div className="recent-projects">
+                <div className="recent-title">Recent Projects</div>
+                <div className="recent-list">
+                  {state.recentProjects.map((rp, i) => (
+                    <div key={i} className="recent-item" onClick={() => projectInputRef.current?.click()}>
+                      {rp.thumbnail ? (
+                        <img className="recent-thumb" src={rp.thumbnail} alt="" />
+                      ) : (
+                        <div className="recent-thumb-placeholder" />
+                      )}
+                      <div className="recent-info">
+                        <div className="recent-name">{rp.name}</div>
+                        <div className="recent-meta">
+                          {rp.mapWidth}x{rp.mapHeight} maps
+                          {' — '}
+                          {new Date(rp.date).toLocaleDateString()}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -249,6 +349,12 @@ const App: React.FC = () => {
             >
               Settings
             </button>
+            <button
+              className={`sidebar-tab ${state.rightSidebarTab === 'materials' ? 'active' : ''}`}
+              onClick={() => setRightSidebarTab('materials')}
+            >
+              Materials
+            </button>
           </div>
 
           {state.rightSidebarTab === 'palette' ? (
@@ -259,10 +365,16 @@ const App: React.FC = () => {
               selectedTone={state.selectedTone}
               mapMode={state.project?.conversionSettings.mapMode ?? 'flat'}
               carpetOnly={state.project?.conversionSettings.carpetOnly ?? false}
+              blockChoices={state.project?.blockChoices ?? {}}
+              disabledColourSets={state.project?.disabledColourSets ?? []}
               onSelectColour={setSelectedColour}
               onFilterChange={handleFilterChange}
+              onBlockChoiceChange={setBlockChoice}
+              onToggleColourSet={toggleColourSet}
+              onEnableAll={enableAllColourSets}
+              onDisableAll={disableAllColourSets}
             />
-          ) : (
+          ) : state.rightSidebarTab === 'settings' ? (
             <SettingsPanel
               settings={state.project?.conversionSettings ?? {
                 mapMode: 'flat',
@@ -280,6 +392,11 @@ const App: React.FC = () => {
               mapHeight={state.project?.mapHeight ?? 1}
               onSettingChange={updateConversionSetting}
               onMapSizeChange={handleMapSizeChange}
+            />
+          ) : (
+            <MaterialsPanel
+              project={state.project}
+              coloursData={state.coloursData}
             />
           )}
         </div>

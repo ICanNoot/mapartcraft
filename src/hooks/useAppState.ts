@@ -4,15 +4,16 @@ import { useState, useCallback, useRef } from 'react';
 import {
   ProjectState, ToolType, ConversionSettings, SelectionRect,
   HistoryEntry, EMPTY_PIXEL, MAP_SIZE, DEFAULT_CONVERSION_SETTINGS,
-  encodePixel, decodePixel, ToneVariant, ExportSettings,
+  encodePixel, decodePixel, ToneVariant, ExportSettings, RecentProject,
 } from '../types';
-import { buildPalette } from '../utils/colour';
+import { buildPalette, findNearestColour, findCarpetBlockIndex } from '../utils/colour';
 import { PaletteEntry } from '../types';
 import { applyDithering } from '../utils/dither';
 import { resizeImage, applyPreprocessing, calculateDefaultMapSize } from '../utils/imageProcessing';
-import { exportProject, bundleAsZip } from '../utils/export';
+import { exportProject, exportMapDat, bundleAsZip } from '../utils/export';
 
 const MAX_HISTORY = 100;
+const RECENT_PROJECTS_KEY = 'mapart_recent_projects';
 
 export interface AppState {
   project: ProjectState | null;
@@ -32,7 +33,38 @@ export interface AppState {
   palette: PaletteEntry[];
   coloursData: Record<string, any> | null;
   exportDialogOpen: boolean;
-  rightSidebarTab: 'palette' | 'settings';
+  rightSidebarTab: 'palette' | 'settings' | 'materials';
+  recentProjects: RecentProject[];
+}
+
+function loadRecentProjects(): RecentProject[] {
+  try {
+    const raw = localStorage.getItem(RECENT_PROJECTS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return [];
+}
+
+function saveRecentProjects(projects: RecentProject[]) {
+  try {
+    localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(projects.slice(0, 10)));
+  } catch { /* ignore */ }
+}
+
+function addRecentProject(name: string, mapWidth: number, mapHeight: number, thumbnail: string): RecentProject[] {
+  const existing = loadRecentProjects();
+  const entry: RecentProject = {
+    name,
+    date: new Date().toISOString(),
+    mapWidth,
+    mapHeight,
+    thumbnail,
+  };
+  // Remove duplicate by name
+  const filtered = existing.filter(p => p.name !== name);
+  const updated = [entry, ...filtered].slice(0, 10);
+  saveRecentProjects(updated);
+  return updated;
 }
 
 export function useAppState() {
@@ -55,6 +87,7 @@ export function useAppState() {
     coloursData: null,
     exportDialogOpen: false,
     rightSidebarTab: 'palette',
+    recentProjects: loadRecentProjects(),
   });
 
   const historyRef = useRef<HistoryEntry[]>([]);
@@ -64,34 +97,23 @@ export function useAppState() {
   const pushHistory = useCallback((pixels: Uint16Array, description: string) => {
     const history = historyRef.current;
     const idx = historyIndexRef.current;
-
-    // Remove any redo history
     history.splice(idx + 1);
-
-    // Push new entry
     history.push({ pixels: new Uint16Array(pixels), description });
-
-    // Trim if too long
     if (history.length > MAX_HISTORY) {
       history.shift();
     }
-
     historyIndexRef.current = history.length - 1;
   }, []);
 
   const undo = useCallback(() => {
     const history = historyRef.current;
     const idx = historyIndexRef.current;
-
     if (idx > 0) {
       historyIndexRef.current = idx - 1;
       const entry = history[idx - 1];
       setState(prev => {
         if (!prev.project) return prev;
-        return {
-          ...prev,
-          project: { ...prev.project, pixels: new Uint16Array(entry.pixels) },
-        };
+        return { ...prev, project: { ...prev.project, pixels: new Uint16Array(entry.pixels) } };
       });
     }
   }, []);
@@ -99,16 +121,12 @@ export function useAppState() {
   const redo = useCallback(() => {
     const history = historyRef.current;
     const idx = historyIndexRef.current;
-
     if (idx < history.length - 1) {
       historyIndexRef.current = idx + 1;
       const entry = history[idx + 1];
       setState(prev => {
         if (!prev.project) return prev;
-        return {
-          ...prev,
-          project: { ...prev.project, pixels: new Uint16Array(entry.pixels) },
-        };
+        return { ...prev, project: { ...prev.project, pixels: new Uint16Array(entry.pixels) } };
       });
     }
   }, []);
@@ -155,12 +173,13 @@ export function useAppState() {
       if (!prev.coloursData) return prev;
       const cs = settings ? { ...prev.project?.conversionSettings, ...settings } as ConversionSettings : prev.project?.conversionSettings;
       if (!cs) return prev;
-      const palette = buildPalette(prev.coloursData, cs.mapMode, cs.carpetOnly, cs.betterColour);
+      const disabled = prev.project?.disabledColourSets;
+      const palette = buildPalette(prev.coloursData, cs.mapMode, cs.carpetOnly, cs.betterColour, disabled);
       return { ...prev, palette };
     });
   }, []);
 
-  const setRightSidebarTab = useCallback((tab: 'palette' | 'settings') => {
+  const setRightSidebarTab = useCallback((tab: 'palette' | 'settings' | 'materials') => {
     setState(prev => ({ ...prev, rightSidebarTab: tab }));
   }, []);
 
@@ -171,10 +190,10 @@ export function useAppState() {
     pixelHeight: number,
     settings: ConversionSettings,
     coloursData: Record<string, any>,
+    disabledColourSets?: number[],
   ): Uint16Array => {
     const pixels = new Uint16Array(pixelWidth * pixelHeight).fill(EMPTY_PIXEL);
 
-    // Clone to avoid mutating stored source
     const cloned = new ImageData(
       new Uint8ClampedArray(sourceImageData.data),
       sourceImageData.width,
@@ -188,7 +207,7 @@ export function useAppState() {
       settings.saturation
     );
 
-    const palette = buildPalette(coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour);
+    const palette = buildPalette(coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour, disabledColourSets);
 
     const result = applyDithering(
       processed.data,
@@ -211,65 +230,50 @@ export function useAppState() {
     setState(prev => {
       if (!prev.coloursData) return prev;
       const coloursData = prev.coloursData;
-
-      // If a project exists, reuse its settings; otherwise use defaults
       const settings = prev.project?.conversionSettings ?? DEFAULT_CONVERSION_SETTINGS;
+      const disabled = prev.project?.disabledColourSets ?? [];
 
-      // Determine map size from image aspect ratio
       const { mapWidth, mapHeight } = calculateDefaultMapSize(img.width, img.height);
       const pixelWidth = mapWidth * MAP_SIZE;
       const pixelHeight = mapHeight * MAP_SIZE;
 
-      // Resize to target dimensions
       const sourceImageData = resizeImage(img, pixelWidth, pixelHeight, settings.resizeAlgorithm);
 
-      // Create originalImageData at full original resolution
       const origCanvas = document.createElement('canvas');
       origCanvas.width = img.width;
       origCanvas.height = img.height;
       origCanvas.getContext('2d')!.drawImage(img, 0, 0);
       const originalImageData = origCanvas.getContext('2d')!.getImageData(0, 0, img.width, img.height);
 
-      // Run conversion
-      const pixels = runConversion(sourceImageData, pixelWidth, pixelHeight, settings, coloursData);
-      const palette = buildPalette(coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour);
+      const pixels = runConversion(sourceImageData, pixelWidth, pixelHeight, settings, coloursData, disabled);
+      const palette = buildPalette(coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour, disabled);
 
       const project: ProjectState = {
-        mapWidth,
-        mapHeight,
-        pixelWidth,
-        pixelHeight,
-        pixels,
+        mapWidth, mapHeight, pixelWidth, pixelHeight, pixels,
         blockChoices: prev.project?.blockChoices ?? {},
+        disabledColourSets: disabled,
         conversionSettings: settings,
-        sourceImageData,
-        originalImageData,
+        sourceImageData, originalImageData,
       };
 
       historyRef.current = [{ pixels: new Uint16Array(pixels), description: 'Initial' }];
       historyIndexRef.current = 0;
 
       return {
-        ...prev,
-        project,
-        palette,
+        ...prev, project, palette,
         zoom: Math.min(
           (window.innerWidth - 520) / pixelWidth,
           (window.innerHeight - 100) / pixelHeight
         ),
-        panX: 0,
-        panY: 0,
+        panX: 0, panY: 0,
       };
     });
   }, [runConversion]);
 
   const createProject = useCallback((
-    mapWidth: number,
-    mapHeight: number,
-    sourceImageData: ImageData | null,
-    originalImageData: ImageData | null,
-    settings: ConversionSettings,
-    coloursData: Record<string, any>
+    mapWidth: number, mapHeight: number,
+    sourceImageData: ImageData | null, originalImageData: ImageData | null,
+    settings: ConversionSettings, coloursData: Record<string, any>
   ) => {
     const pixelWidth = mapWidth * MAP_SIZE;
     const pixelHeight = mapHeight * MAP_SIZE;
@@ -284,89 +288,61 @@ export function useAppState() {
     const palette = buildPalette(coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour);
 
     const project: ProjectState = {
-      mapWidth,
-      mapHeight,
-      pixelWidth,
-      pixelHeight,
-      pixels,
+      mapWidth, mapHeight, pixelWidth, pixelHeight, pixels,
       blockChoices: {},
+      disabledColourSets: [],
       conversionSettings: settings,
-      sourceImageData,
-      originalImageData,
+      sourceImageData, originalImageData,
     };
 
-    // Initialize history
     historyRef.current = [{ pixels: new Uint16Array(pixels), description: 'Initial' }];
     historyIndexRef.current = 0;
 
     setState(prev => ({
-      ...prev,
-      project,
-      palette,
+      ...prev, project, palette,
       zoom: Math.min(
         (window.innerWidth - 520) / pixelWidth,
         (window.innerHeight - 100) / pixelHeight
       ),
-      panX: 0,
-      panY: 0,
+      panX: 0, panY: 0,
     }));
   }, [runConversion]);
 
-  // Re-convert from sourceImageData with current settings
   const reconvert = useCallback((description: string) => {
     setState(prev => {
       const srcImg = prev.project?.sourceImageData;
       if (!prev.project || !srcImg || !prev.coloursData) return prev;
       const settings = prev.project.conversionSettings;
+      const disabled = prev.project.disabledColourSets;
 
-      const pixels = runConversion(
-        srcImg,
-        prev.project.pixelWidth,
-        prev.project.pixelHeight,
-        settings,
-        prev.coloursData
-      );
-
+      const pixels = runConversion(srcImg, prev.project.pixelWidth, prev.project.pixelHeight, settings, prev.coloursData, disabled);
       pushHistory(pixels, description);
 
-      const palette = buildPalette(prev.coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour);
-
-      return {
-        ...prev,
-        project: { ...prev.project, pixels },
-        palette,
-      };
+      const palette = buildPalette(prev.coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour, disabled);
+      return { ...prev, project: { ...prev.project, pixels }, palette };
     });
   }, [runConversion, pushHistory]);
 
-  // Resize from originalImageData and re-convert
   const resizeAndReconvert = useCallback((newMapWidth: number, newMapHeight: number) => {
     setState(prev => {
       if (!prev.project || !prev.coloursData) return prev;
       const { project, coloursData } = prev;
-
       const origImg = project.originalImageData;
       if (!origImg) return prev;
 
       const newPixelWidth = newMapWidth * MAP_SIZE;
       const newPixelHeight = newMapHeight * MAP_SIZE;
 
-      // Resize original to new dimensions via a temp canvas
       const tmpCanvas = document.createElement('canvas');
       tmpCanvas.width = origImg.width;
       tmpCanvas.height = origImg.height;
       tmpCanvas.getContext('2d')!.putImageData(origImg, 0, 0);
 
-      const newSourceImageData = resizeImage(
-        tmpCanvas,
-        newPixelWidth,
-        newPixelHeight,
-        project.conversionSettings.resizeAlgorithm
-      );
-
+      const newSourceImageData = resizeImage(tmpCanvas, newPixelWidth, newPixelHeight, project.conversionSettings.resizeAlgorithm);
       const settings = project.conversionSettings;
-      const pixels = runConversion(newSourceImageData, newPixelWidth, newPixelHeight, settings, coloursData);
-      const palette = buildPalette(coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour);
+      const disabled = project.disabledColourSets;
+      const pixels = runConversion(newSourceImageData, newPixelWidth, newPixelHeight, settings, coloursData, disabled);
+      const palette = buildPalette(coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour, disabled);
 
       pushHistory(pixels, `Resize to ${newMapWidth}x${newMapHeight}`);
 
@@ -374,25 +350,18 @@ export function useAppState() {
         ...prev,
         project: {
           ...project,
-          mapWidth: newMapWidth,
-          mapHeight: newMapHeight,
-          pixelWidth: newPixelWidth,
-          pixelHeight: newPixelHeight,
-          pixels,
-          sourceImageData: newSourceImageData,
+          mapWidth: newMapWidth, mapHeight: newMapHeight,
+          pixelWidth: newPixelWidth, pixelHeight: newPixelHeight,
+          pixels, sourceImageData: newSourceImageData,
         },
         palette,
       };
     });
   }, [runConversion, pushHistory]);
 
-  // Update a conversion setting and trigger reconvert (debounced for sliders)
   const updateConversionSetting = useCallback(<K extends keyof ConversionSettings>(
-    key: K,
-    value: ConversionSettings[K],
-    debounce?: boolean
+    key: K, value: ConversionSettings[K], debounce?: boolean
   ) => {
-    // Update the setting immediately in state
     setState(prev => {
       if (!prev.project) return prev;
       return {
@@ -404,7 +373,6 @@ export function useAppState() {
       };
     });
 
-    // Clear any pending reconvert timer
     if (reconvertTimerRef.current) {
       clearTimeout(reconvertTimerRef.current);
       reconvertTimerRef.current = null;
@@ -413,8 +381,8 @@ export function useAppState() {
     const doReconvert = () => {
       setState(prev => {
         if (!prev.project || !prev.coloursData) return prev;
+        const disabled = prev.project.disabledColourSets;
 
-        // If resizeAlgorithm changed, re-resize from originalImageData
         if (key === 'resizeAlgorithm' && prev.project.originalImageData) {
           const origImg = prev.project.originalImageData;
           const tmpCanvas = document.createElement('canvas');
@@ -422,64 +390,102 @@ export function useAppState() {
           tmpCanvas.height = origImg.height;
           tmpCanvas.getContext('2d')!.putImageData(origImg, 0, 0);
           const newSourceImageData = resizeImage(
-            tmpCanvas,
-            prev.project.pixelWidth,
-            prev.project.pixelHeight,
+            tmpCanvas, prev.project.pixelWidth, prev.project.pixelHeight,
             prev.project.conversionSettings.resizeAlgorithm
           );
           const settings = prev.project.conversionSettings;
-          const pixels = runConversion(newSourceImageData, prev.project.pixelWidth, prev.project.pixelHeight, settings, prev.coloursData);
+          const pixels = runConversion(newSourceImageData, prev.project.pixelWidth, prev.project.pixelHeight, settings, prev.coloursData, disabled);
           pushHistory(pixels, `Changed resize algorithm to ${value}`);
-          const palette = buildPalette(prev.coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour);
-          return {
-            ...prev,
-            project: { ...prev.project, pixels, sourceImageData: newSourceImageData },
-            palette,
-          };
+          const palette = buildPalette(prev.coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour, disabled);
+          return { ...prev, project: { ...prev.project, pixels, sourceImageData: newSourceImageData }, palette };
         }
 
         if (!prev.project.sourceImageData) return prev;
         const settings = prev.project.conversionSettings;
-
         const pixels = runConversion(
-          prev.project.sourceImageData,
-          prev.project.pixelWidth,
-          prev.project.pixelHeight,
-          settings,
-          prev.coloursData
+          prev.project.sourceImageData, prev.project.pixelWidth, prev.project.pixelHeight,
+          settings, prev.coloursData, disabled
         );
-
         pushHistory(pixels, `Changed ${key} to ${value}`);
-
-        const palette = buildPalette(prev.coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour);
-
-        return {
-          ...prev,
-          project: { ...prev.project, pixels },
-          palette,
-        };
+        const palette = buildPalette(prev.coloursData, settings.mapMode, settings.carpetOnly, settings.betterColour, disabled);
+        return { ...prev, project: { ...prev.project, pixels }, palette };
       });
     };
 
     if (debounce) {
       reconvertTimerRef.current = setTimeout(doReconvert, 350);
     } else {
-      // Small delay to ensure the setting setState has been applied
       reconvertTimerRef.current = setTimeout(doReconvert, 10);
     }
   }, [runConversion, pushHistory]);
+
+  // Toggle a colour set enabled/disabled — remap existing pixels if disabling
+  const toggleColourSet = useCallback((colourSetId: number) => {
+    setState(prev => {
+      if (!prev.project || !prev.coloursData) return prev;
+      const { project, coloursData } = prev;
+      const disabled = [...project.disabledColourSets];
+      const idx = disabled.indexOf(colourSetId);
+
+      if (idx >= 0) {
+        // Re-enable
+        disabled.splice(idx, 1);
+        const palette = buildPalette(coloursData, project.conversionSettings.mapMode, project.conversionSettings.carpetOnly, project.conversionSettings.betterColour, disabled);
+        return { ...prev, project: { ...project, disabledColourSets: disabled }, palette };
+      } else {
+        // Disable — remap existing pixels using this colour set to nearest enabled colour
+        disabled.push(colourSetId);
+        const palette = buildPalette(coloursData, project.conversionSettings.mapMode, project.conversionSettings.carpetOnly, true, disabled);
+
+        if (palette.length === 0) {
+          return { ...prev, project: { ...project, disabledColourSets: disabled }, palette };
+        }
+
+        const newPixels = new Uint16Array(project.pixels);
+        for (let i = 0; i < newPixels.length; i++) {
+          const decoded = decodePixel(newPixels[i]);
+          if (decoded && decoded.colourSetId === colourSetId) {
+            const cs = coloursData[decoded.colourSetId.toString()];
+            if (cs) {
+              const rgb = cs.tonesRGB[decoded.tone] as [number, number, number];
+              if (rgb) {
+                const nearest = findNearestColour(rgb[0], rgb[1], rgb[2], palette, project.conversionSettings.betterColour);
+                newPixels[i] = encodePixel(nearest.entry.colourSetId, nearest.entry.tone);
+              }
+            }
+          }
+        }
+
+        pushHistory(newPixels, `Disabled colour set ${colourSetId}`);
+        const displayPalette = buildPalette(coloursData, project.conversionSettings.mapMode, project.conversionSettings.carpetOnly, project.conversionSettings.betterColour, disabled);
+        return { ...prev, project: { ...project, pixels: newPixels, disabledColourSets: disabled }, palette: displayPalette };
+      }
+    });
+  }, [pushHistory]);
+
+  const enableAllColourSets = useCallback(() => {
+    setState(prev => {
+      if (!prev.project || !prev.coloursData) return prev;
+      const palette = buildPalette(prev.coloursData, prev.project.conversionSettings.mapMode, prev.project.conversionSettings.carpetOnly, prev.project.conversionSettings.betterColour);
+      return { ...prev, project: { ...prev.project, disabledColourSets: [] }, palette };
+    });
+  }, []);
+
+  const disableAllColourSets = useCallback(() => {
+    setState(prev => {
+      if (!prev.project || !prev.coloursData) return prev;
+      const allIds = Object.keys(prev.coloursData).map(Number);
+      return { ...prev, project: { ...prev.project, disabledColourSets: allIds }, palette: [] };
+    });
+  }, []);
 
   const setPixel = useCallback((x: number, y: number, colourSetId: number, tone: ToneVariant) => {
     setState(prev => {
       if (!prev.project) return prev;
       if (x < 0 || x >= prev.project.pixelWidth || y < 0 || y >= prev.project.pixelHeight) return prev;
-
       const newPixels = new Uint16Array(prev.project.pixels);
       newPixels[y * prev.project.pixelWidth + x] = encodePixel(colourSetId, tone);
-      return {
-        ...prev,
-        project: { ...prev.project, pixels: newPixels },
-      };
+      return { ...prev, project: { ...prev.project, pixels: newPixels } };
     });
   }, []);
 
@@ -492,10 +498,7 @@ export function useAppState() {
           newPixels[y * prev.project.pixelWidth + x] = encoded;
         }
       }
-      return {
-        ...prev,
-        project: { ...prev.project, pixels: newPixels },
-      };
+      return { ...prev, project: { ...prev.project, pixels: newPixels } };
     });
   }, []);
 
@@ -529,15 +532,11 @@ export function useAppState() {
 
         visited.add(idx);
         newPixels[idx] = fillEncoded;
-
         stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
       }
 
       pushHistory(newPixels, 'Fill');
-      return {
-        ...prev,
-        project: { ...prev.project, pixels: newPixels },
-      };
+      return { ...prev, project: { ...prev.project, pixels: newPixels } };
     });
   }, [pushHistory]);
 
@@ -588,10 +587,7 @@ export function useAppState() {
       }
 
       pushHistory(newPixels, 'Paste');
-      return {
-        ...prev,
-        project: { ...prev.project, pixels: newPixels },
-      };
+      return { ...prev, project: { ...prev.project, pixels: newPixels } };
     });
   }, [pushHistory]);
 
@@ -612,11 +608,7 @@ export function useAppState() {
       }
 
       pushHistory(newPixels, 'Delete selection');
-      return {
-        ...prev,
-        project: { ...prev.project, pixels: newPixels },
-        selection: null,
-      };
+      return { ...prev, project: { ...prev.project, pixels: newPixels }, selection: null };
     });
   }, [pushHistory]);
 
@@ -632,7 +624,13 @@ export function useAppState() {
     const currentState = state;
     if (!currentState.project || !currentState.coloursData) return;
 
-    const files = await exportProject(currentState.project, currentState.coloursData, settings);
+    let files: { filename: string; data: Uint8Array }[];
+
+    if (settings.exportFormat === 'mapdat') {
+      files = await exportMapDat(currentState.project, currentState.coloursData, settings);
+    } else {
+      files = await exportProject(currentState.project, currentState.coloursData, settings);
+    }
 
     if (files.length === 1) {
       downloadFile(files[0].filename, files[0].data);
@@ -644,27 +642,25 @@ export function useAppState() {
 
   const saveProject = useCallback(() => {
     if (!state.project) return;
-    // Serialize sourceImageData as raw RGBA array
     let sourceImageSerialized: { width: number; height: number; data: number[] } | null = null;
     if (state.project.sourceImageData) {
       const sid = state.project.sourceImageData;
       sourceImageSerialized = {
-        width: sid.width,
-        height: sid.height,
+        width: sid.width, height: sid.height,
         data: Array.from(sid.data),
       };
     }
     const data = {
-      version: 2,
+      version: 3,
       mapWidth: state.project.mapWidth,
       mapHeight: state.project.mapHeight,
       pixelWidth: state.project.pixelWidth,
       pixelHeight: state.project.pixelHeight,
       pixels: Array.from(state.project.pixels),
       blockChoices: state.project.blockChoices,
+      disabledColourSets: state.project.disabledColourSets,
       conversionSettings: state.project.conversionSettings,
       sourceImageData: sourceImageSerialized,
-      // originalImageData excluded to reduce file size
     };
     const json = JSON.stringify(data);
     const blob = new Blob([json], { type: 'application/json' });
@@ -674,7 +670,12 @@ export function useAppState() {
     a.download = 'project.mapstudio';
     a.click();
     URL.revokeObjectURL(url);
-  }, [state.project]);
+
+    // Generate thumbnail and save to recent projects
+    const thumbnail = generateThumbnail(state.project, state.coloursData);
+    const recentProjects = addRecentProject('project', state.project.mapWidth, state.project.mapHeight, thumbnail);
+    setState(prev => ({ ...prev, recentProjects }));
+  }, [state.project, state.coloursData]);
 
   const loadProject = useCallback((file: File) => {
     const reader = new FileReader();
@@ -683,14 +684,11 @@ export function useAppState() {
         const data = JSON.parse(e.target?.result as string);
         const pixels = new Uint16Array(data.pixels);
 
-        // Restore sourceImageData if present
         let sourceImageData: ImageData | null = null;
         if (data.sourceImageData) {
           const sid = data.sourceImageData;
           sourceImageData = new ImageData(
-            new Uint8ClampedArray(sid.data),
-            sid.width,
-            sid.height
+            new Uint8ClampedArray(sid.data), sid.width, sid.height
           );
         }
 
@@ -701,24 +699,29 @@ export function useAppState() {
           pixelHeight: data.pixelHeight,
           pixels,
           blockChoices: data.blockChoices || {},
+          disabledColourSets: data.disabledColourSets || [],
           conversionSettings: data.conversionSettings || DEFAULT_CONVERSION_SETTINGS,
           sourceImageData,
-          originalImageData: null, // Not stored in save files
+          originalImageData: null,
         };
 
         historyRef.current = [{ pixels: new Uint16Array(pixels), description: 'Loaded' }];
         historyIndexRef.current = 0;
 
-        setState(prev => ({
-          ...prev,
-          project,
-          zoom: Math.min(
-            (window.innerWidth - 520) / project.pixelWidth,
-            (window.innerHeight - 100) / project.pixelHeight
-          ),
-          panX: 0,
-          panY: 0,
-        }));
+        // Add to recent projects
+        const name = file.name.replace('.mapstudio', '');
+        setState(prev => {
+          const thumbnail = generateThumbnail(project, prev.coloursData);
+          const recentProjects = addRecentProject(name, project.mapWidth, project.mapHeight, thumbnail);
+          return {
+            ...prev, project, recentProjects,
+            zoom: Math.min(
+              (window.innerWidth - 520) / project.pixelWidth,
+              (window.innerHeight - 100) / project.pixelHeight
+            ),
+            panX: 0, panY: 0,
+          };
+        });
       } catch (err) {
         console.error('Failed to load project:', err);
         alert('Failed to load project file.');
@@ -744,42 +747,19 @@ export function useAppState() {
   const canRedo = historyIndexRef.current < historyRef.current.length - 1;
 
   return {
-    state,
-    setState,
-    setTool,
-    setBrushSize,
-    setSelectedColour,
-    setZoom,
-    setPan,
-    setCursor,
-    toggleGrid,
-    toggleMapBorders,
-    setColoursData,
-    rebuildPalette,
-    setRightSidebarTab,
-    importImage,
-    createProject,
-    reconvert,
-    resizeAndReconvert,
-    updateConversionSetting,
-    setPixel,
-    setPixelsBatch,
-    commitPixels,
-    fillArea,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-    setSelection,
-    copySelection,
-    pasteClipboard,
-    deleteSelection,
-    openExportDialog,
-    closeExportDialog,
-    doExport,
-    saveProject,
-    loadProject,
-    setBlockChoice,
+    state, setState,
+    setTool, setBrushSize, setSelectedColour,
+    setZoom, setPan, setCursor,
+    toggleGrid, toggleMapBorders,
+    setColoursData, rebuildPalette, setRightSidebarTab,
+    importImage, createProject,
+    reconvert, resizeAndReconvert, updateConversionSetting,
+    setPixel, setPixelsBatch, commitPixels, fillArea,
+    undo, redo, canUndo, canRedo,
+    setSelection, copySelection, pasteClipboard, deleteSelection,
+    openExportDialog, closeExportDialog, doExport,
+    saveProject, loadProject, setBlockChoice,
+    toggleColourSet, enableAllColourSets, disableAllColourSets,
   };
 }
 
@@ -791,4 +771,47 @@ function downloadFile(filename: string, data: Uint8Array) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function generateThumbnail(project: ProjectState, coloursData: Record<string, any> | null): string {
+  if (!coloursData) return '';
+  try {
+    const thumbSize = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = thumbSize;
+    canvas.height = thumbSize;
+    const ctx = canvas.getContext('2d')!;
+    const imageData = ctx.createImageData(thumbSize, thumbSize);
+    const scaleX = project.pixelWidth / thumbSize;
+    const scaleY = project.pixelHeight / thumbSize;
+
+    for (let ty = 0; ty < thumbSize; ty++) {
+      for (let tx = 0; tx < thumbSize; tx++) {
+        const px = Math.floor(tx * scaleX);
+        const py = Math.floor(ty * scaleY);
+        const encoded = project.pixels[py * project.pixelWidth + px];
+        const decoded = decodePixel(encoded);
+        const idx = (ty * thumbSize + tx) * 4;
+        if (decoded) {
+          const cs = coloursData[decoded.colourSetId.toString()];
+          if (cs?.tonesRGB?.[decoded.tone]) {
+            const [r, g, b] = cs.tonesRGB[decoded.tone];
+            imageData.data[idx] = r;
+            imageData.data[idx + 1] = g;
+            imageData.data[idx + 2] = b;
+            imageData.data[idx + 3] = 255;
+            continue;
+          }
+        }
+        imageData.data[idx] = 30;
+        imageData.data[idx + 1] = 30;
+        imageData.data[idx + 2] = 50;
+        imageData.data[idx + 3] = 255;
+      }
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return canvas.toDataURL('image/png');
+  } catch {
+    return '';
+  }
 }

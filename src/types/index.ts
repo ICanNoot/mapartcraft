@@ -74,6 +74,7 @@ export interface ProjectState {
   pixelHeight: number; // mapHeight * 128
   pixels: Uint16Array; // colourSetId * 4 + toneIndex encoded; 0xFFFF = empty
   blockChoices: Record<number, number>; // colourSetId -> chosen blockIndex
+  disabledColourSets: number[]; // colourSetIds that are disabled
   conversionSettings: ConversionSettings;
   sourceImageData: ImageData | null; // resized to current map dimensions, before conversion
   originalImageData: ImageData | null; // original resolution, for re-resizing on map size change
@@ -122,10 +123,29 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   saturation: 0,
 };
 
+export type ExportFormat = 'schematic' | 'mapdat';
+
 export interface ExportSettings {
   filename: string;
   splitExport: boolean;
   supportBlockMode: SupportBlockMode;
   supportBlockType: string; // NBT name like "stone"
   version: string;
+  exportFormat: ExportFormat;
+  startingMapId: number; // For map.dat export
+}
+
+export interface MaterialEntry {
+  blockName: string;
+  nbtName: string;
+  count: number;
+  colourSetId: number;
+}
+
+export interface RecentProject {
+  name: string;
+  date: string;
+  mapWidth: number;
+  mapHeight: number;
+  thumbnail: string; // data URL
 }

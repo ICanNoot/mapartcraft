@@ -6,11 +6,12 @@ import { MenuBar } from './components/menubar/MenuBar';
 import { ToolPanel } from './components/tools/ToolPanel';
 import { PixelCanvas } from './components/canvas/PixelCanvas';
 import { PalettePanel } from './components/palette/PalettePanel';
+import { SettingsPanel } from './components/settings/SettingsPanel';
 import { StatusBar } from './components/statusbar/StatusBar';
 import { ImportDialog } from './components/dialogs/ImportDialog';
 import { ExportDialog } from './components/dialogs/ExportDialog';
 import { loadImage } from './utils/imageProcessing';
-import { ToolType, ToneVariant, ConversionSettings, MAP_SIZE } from './types';
+import { ToolType, ToneVariant, ResizeAlgorithm, MAP_SIZE } from './types';
 
 // Import colour data - will be bundled by Vite
 import coloursJSON from './data/coloursJSON.json';
@@ -19,10 +20,12 @@ const App: React.FC = () => {
   const {
     state, setTool, setBrushSize, setSelectedColour,
     setZoom, setPan, setCursor, toggleGrid, toggleMapBorders,
-    setColoursData, rebuildPalette,
+    setColoursData, rebuildPalette, setRightSidebarTab,
     openImportDialog, closeImportDialog, setSourceImage,
-    createProject, setPixelsBatch, commitPixels, fillArea,
-    undo, redo, setSelection, copySelection, pasteClipboard,
+    createProject, reconvert, resizeAndReconvert, updateConversionSetting,
+    setPixelsBatch, commitPixels, fillArea,
+    undo, redo, canUndo, canRedo,
+    setSelection, copySelection, pasteClipboard,
     deleteSelection, openExportDialog, closeExportDialog,
     doExport, saveProject, loadProject,
   } = useAppState();
@@ -150,12 +153,24 @@ const App: React.FC = () => {
   const handleImport = useCallback((
     mapWidth: number,
     mapHeight: number,
-    imageData: ImageData,
-    settings: ConversionSettings
+    sourceImageData: ImageData,
+    originalImageData: ImageData,
+    resizeAlgorithm: ResizeAlgorithm,
   ) => {
     if (!state.coloursData) return;
-    createProject(mapWidth, mapHeight, imageData, settings, state.coloursData);
-  }, [state.coloursData, createProject]);
+    const settings = state.project?.conversionSettings ?? {
+      mapMode: 'flat' as const,
+      staircaseMode: 'classic' as const,
+      ditherMethod: 'none' as const,
+      resizeAlgorithm,
+      betterColour: false,
+      carpetOnly: false,
+      brightness: 0,
+      contrast: 0,
+      saturation: 0,
+    };
+    createProject(mapWidth, mapHeight, sourceImageData, originalImageData, { ...settings, resizeAlgorithm }, state.coloursData);
+  }, [state.coloursData, state.project?.conversionSettings, createProject]);
 
   const handleEyedrop = useCallback((colourSetId: number, tone: ToneVariant) => {
     setSelectedColour(colourSetId, tone);
@@ -165,6 +180,10 @@ const App: React.FC = () => {
   const handleFilterChange = useCallback((carpetOnly: boolean) => {
     rebuildPalette({ carpetOnly });
   }, [rebuildPalette]);
+
+  const handleMapSizeChange = useCallback((newMapWidth: number, newMapHeight: number) => {
+    resizeAndReconvert(newMapWidth, newMapHeight);
+  }, [resizeAndReconvert]);
 
   return (
     <div className="app-container">
@@ -187,6 +206,8 @@ const App: React.FC = () => {
       {/* Menu Bar */}
       <MenuBar
         hasProject={!!state.project}
+        canUndo={canUndo}
+        canRedo={canRedo}
         onNewProject={() => fileInputRef.current?.click()}
         onOpenImage={() => fileInputRef.current?.click()}
         onSaveProject={saveProject}
@@ -264,17 +285,55 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Right sidebar */}
-        <PalettePanel
-          palette={state.palette}
-          coloursData={state.coloursData}
-          selectedColourSetId={state.selectedColourSetId}
-          selectedTone={state.selectedTone}
-          mapMode={state.project?.conversionSettings.mapMode ?? 'flat'}
-          carpetOnly={state.project?.conversionSettings.carpetOnly ?? false}
-          onSelectColour={setSelectedColour}
-          onFilterChange={handleFilterChange}
-        />
+        {/* Right sidebar — tabbed */}
+        <div className="right-sidebar">
+          <div className="sidebar-tabs">
+            <button
+              className={`sidebar-tab ${state.rightSidebarTab === 'palette' ? 'active' : ''}`}
+              onClick={() => setRightSidebarTab('palette')}
+            >
+              Palette
+            </button>
+            <button
+              className={`sidebar-tab ${state.rightSidebarTab === 'settings' ? 'active' : ''}`}
+              onClick={() => setRightSidebarTab('settings')}
+            >
+              Settings
+            </button>
+          </div>
+
+          {state.rightSidebarTab === 'palette' ? (
+            <PalettePanel
+              palette={state.palette}
+              coloursData={state.coloursData}
+              selectedColourSetId={state.selectedColourSetId}
+              selectedTone={state.selectedTone}
+              mapMode={state.project?.conversionSettings.mapMode ?? 'flat'}
+              carpetOnly={state.project?.conversionSettings.carpetOnly ?? false}
+              onSelectColour={setSelectedColour}
+              onFilterChange={handleFilterChange}
+            />
+          ) : (
+            <SettingsPanel
+              settings={state.project?.conversionSettings ?? {
+                mapMode: 'flat',
+                staircaseMode: 'classic',
+                ditherMethod: 'none',
+                resizeAlgorithm: 'bilinear',
+                betterColour: false,
+                carpetOnly: false,
+                brightness: 0,
+                contrast: 0,
+                saturation: 0,
+              }}
+              hasSourceImage={!!state.project?.sourceImageData}
+              mapWidth={state.project?.mapWidth ?? 1}
+              mapHeight={state.project?.mapHeight ?? 1}
+              onSettingChange={updateConversionSetting}
+              onMapSizeChange={handleMapSizeChange}
+            />
+          )}
+        </div>
       </div>
 
       {/* Status Bar */}
@@ -289,7 +348,6 @@ const App: React.FC = () => {
       {state.importDialogOpen && state.coloursData && (
         <ImportDialog
           sourceImage={state.sourceImage}
-          coloursData={state.coloursData}
           onImport={handleImport}
           onClose={closeImportDialog}
         />

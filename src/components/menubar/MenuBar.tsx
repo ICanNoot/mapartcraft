@@ -4,6 +4,8 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 
 interface MenuBarProps {
   hasProject: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
   onNewProject: () => void;
   onOpenImage: () => void;
   onSaveProject: () => void;
@@ -30,7 +32,8 @@ interface MenuItem {
 }
 
 export const MenuBar: React.FC<MenuBarProps> = ({
-  hasProject, onNewProject, onOpenImage, onSaveProject, onLoadProject,
+  hasProject, canUndo, canRedo,
+  onNewProject, onOpenImage, onSaveProject, onLoadProject,
   onExport, onUndo, onRedo, onZoomIn, onZoomOut, onFitToWindow,
   onToggleGrid, onToggleMapBorders, showGrid, showMapBorders,
 }) => {
@@ -47,8 +50,8 @@ export const MenuBar: React.FC<MenuBarProps> = ({
       { label: 'Export NBT...', shortcut: 'Ctrl+E', action: onExport, disabled: !hasProject },
     ],
     Edit: [
-      { label: 'Undo', shortcut: 'Ctrl+Z', action: onUndo, disabled: !hasProject },
-      { label: 'Redo', shortcut: 'Ctrl+Shift+Z', action: onRedo, disabled: !hasProject },
+      { label: 'Undo', shortcut: 'Ctrl+Z', action: onUndo, disabled: !canUndo },
+      { label: 'Redo', shortcut: 'Ctrl+Shift+Z', action: onRedo, disabled: !canRedo },
     ],
     View: [
       { label: 'Zoom In', shortcut: '+', action: onZoomIn },

@@ -75,6 +75,8 @@ export interface ProjectState {
   pixels: Uint16Array; // colourSetId * 4 + toneIndex encoded; 0xFFFF = empty
   blockChoices: Record<number, number>; // colourSetId -> chosen blockIndex
   conversionSettings: ConversionSettings;
+  sourceImageData: ImageData | null; // resized to current map dimensions, before conversion
+  originalImageData: ImageData | null; // original resolution, for re-resizing on map size change
 }
 
 export interface SelectionRect {

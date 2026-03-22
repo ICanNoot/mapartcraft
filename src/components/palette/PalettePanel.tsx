@@ -88,9 +88,8 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
   }, []);
 
   return (
-    <div className="right-sidebar">
+    <div className="palette-panel-content">
       <div className="sidebar-section">
-        <div className="sidebar-section-title">Palette</div>
         <div className="palette-filter-bar">
           <button
             className={`palette-filter-btn ${!carpetOnly ? 'active' : ''}`}
@@ -155,6 +154,5 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
           <div className="tt-rgb">ID: {tooltip.entry.colourSetId}</div>
         </div>
       )}
-    </div>
-  );
+    </div>  );
 };

@@ -10,8 +10,17 @@ interface NewProjectDialogProps {
 export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
   onConfirm, onClose,
 }) => {
-  const [mapWidth, setMapWidth] = useState(1);
-  const [mapHeight, setMapHeight] = useState(1);
+  const [widthText, setWidthText] = useState('1');
+  const [heightText, setHeightText] = useState('1');
+
+  const parseVal = (text: string, fallback: number) => {
+    const v = parseInt(text);
+    if (!v || isNaN(v)) return fallback;
+    return Math.max(1, Math.min(50, v));
+  };
+
+  const mapWidth = parseVal(widthText, 1);
+  const mapHeight = parseVal(heightText, 1);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -24,22 +33,22 @@ export const NewProjectDialog: React.FC<NewProjectDialogProps> = ({
               <label className="form-label">Width (maps)</label>
               <input
                 className="form-input"
-                type="number"
-                min={1}
-                max={10}
-                value={mapWidth}
-                onChange={e => setMapWidth(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+                type="text"
+                inputMode="numeric"
+                value={widthText}
+                onChange={e => setWidthText(e.target.value)}
+                onBlur={() => setWidthText(String(mapWidth))}
               />
             </div>
             <div className="form-group">
               <label className="form-label">Height (maps)</label>
               <input
                 className="form-input"
-                type="number"
-                min={1}
-                max={10}
-                value={mapHeight}
-                onChange={e => setMapHeight(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+                type="text"
+                inputMode="numeric"
+                value={heightText}
+                onChange={e => setHeightText(e.target.value)}
+                onBlur={() => setHeightText(String(mapHeight))}
               />
             </div>
           </div>

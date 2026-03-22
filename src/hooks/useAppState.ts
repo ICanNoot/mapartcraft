@@ -261,13 +261,15 @@ export function useAppState() {
       historyRef.current = [{ pixels: new Uint16Array(pixels), description: 'Initial' }];
       historyIndexRef.current = 0;
 
+      const newZoom = Math.min(
+        (window.innerWidth - 520) / pixelWidth,
+        (window.innerHeight - 100) / pixelHeight
+      );
       return {
         ...prev, project, palette,
-        zoom: Math.min(
-          (window.innerWidth - 520) / pixelWidth,
-          (window.innerHeight - 100) / pixelHeight
-        ),
-        panX: 0, panY: 0,
+        zoom: newZoom,
+        panX: -(pixelWidth * newZoom) / 2,
+        panY: -(pixelHeight * newZoom) / 2,
       };
     });
   }, [runConversion]);
@@ -300,13 +302,15 @@ export function useAppState() {
     historyRef.current = [{ pixels: new Uint16Array(pixels), description: 'Initial' }];
     historyIndexRef.current = 0;
 
+    const newZoom = Math.min(
+      (window.innerWidth - 520) / pixelWidth,
+      (window.innerHeight - 100) / pixelHeight
+    );
     setState(prev => ({
       ...prev, project, palette,
-      zoom: Math.min(
-        (window.innerWidth - 520) / pixelWidth,
-        (window.innerHeight - 100) / pixelHeight
-      ),
-      panX: 0, panY: 0,
+      zoom: newZoom,
+      panX: -(pixelWidth * newZoom) / 2,
+      panY: -(pixelHeight * newZoom) / 2,
     }));
   }, [runConversion]);
 
@@ -715,13 +719,15 @@ export function useAppState() {
         setState(prev => {
           const thumbnail = generateThumbnail(project, prev.coloursData);
           const recentProjects = addRecentProject(name, project.mapWidth, project.mapHeight, thumbnail);
+          const loadZoom = Math.min(
+            (window.innerWidth - 520) / project.pixelWidth,
+            (window.innerHeight - 100) / project.pixelHeight
+          );
           return {
             ...prev, project, recentProjects,
-            zoom: Math.min(
-              (window.innerWidth - 520) / project.pixelWidth,
-              (window.innerHeight - 100) / project.pixelHeight
-            ),
-            panX: 0, panY: 0,
+            zoom: loadZoom,
+            panX: -(project.pixelWidth * loadZoom) / 2,
+            panY: -(project.pixelHeight * loadZoom) / 2,
           };
         });
       } catch (err) {

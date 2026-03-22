@@ -131,7 +131,7 @@ const App: React.FC = () => {
     const availH = window.innerHeight - 80;
     const z = Math.min(availW / state.project.pixelWidth, availH / state.project.pixelHeight);
     setZoom(z);
-    setPan(0, 0);
+    setPan(-(state.project.pixelWidth * z) / 2, -(state.project.pixelHeight * z) / 2);
   }, [state.project, setZoom, setPan]);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -1,6 +1,6 @@
 // Conversion settings panel — adjustable at any time, triggers live re-conversion
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ConversionSettings, MapMode, StaircaseMode, DitherMethod, ResizeAlgorithm, CanvasBackground,
 } from '../../types';
@@ -29,6 +29,33 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   settings, hasSourceImage, mapWidth, mapHeight,
   onSettingChange, onMapSizeChange,
 }) => {
+  const [widthText, setWidthText] = useState(String(mapWidth));
+  const [heightText, setHeightText] = useState(String(mapHeight));
+
+  // Sync text fields when external values change (e.g. after reconvert)
+  useEffect(() => { setWidthText(String(mapWidth)); }, [mapWidth]);
+  useEffect(() => { setHeightText(String(mapHeight)); }, [mapHeight]);
+
+  const commitWidth = () => {
+    const v = parseInt(widthText);
+    if (!v || isNaN(v)) { setWidthText(String(mapWidth)); return; }
+    const clamped = Math.max(1, Math.min(50, v));
+    setWidthText(String(clamped));
+    if (clamped !== mapWidth) onMapSizeChange(clamped, mapHeight);
+  };
+
+  const commitHeight = () => {
+    const v = parseInt(heightText);
+    if (!v || isNaN(v)) { setHeightText(String(mapHeight)); return; }
+    const clamped = Math.max(1, Math.min(50, v));
+    setHeightText(String(clamped));
+    if (clamped !== mapHeight) onMapSizeChange(mapWidth, clamped);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent, commit: () => void) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); (e.target as HTMLInputElement).blur(); }
+  };
+
   return (
     <div className="settings-panel">
       {!hasSourceImage && (
@@ -44,30 +71,26 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             <label className="form-label">Width</label>
             <input
               className="form-input"
-              type="number"
-              min={1}
-              max={10}
-              value={mapWidth}
+              type="text"
+              inputMode="numeric"
+              value={widthText}
               disabled={!hasSourceImage}
-              onChange={e => {
-                const v = Math.max(1, Math.min(10, parseInt(e.target.value) || 1));
-                onMapSizeChange(v, mapHeight);
-              }}
+              onChange={e => setWidthText(e.target.value)}
+              onBlur={commitWidth}
+              onKeyDown={e => handleKeyDown(e, commitWidth)}
             />
           </div>
           <div className="form-group">
             <label className="form-label">Height</label>
             <input
               className="form-input"
-              type="number"
-              min={1}
-              max={10}
-              value={mapHeight}
+              type="text"
+              inputMode="numeric"
+              value={heightText}
               disabled={!hasSourceImage}
-              onChange={e => {
-                const v = Math.max(1, Math.min(10, parseInt(e.target.value) || 1));
-                onMapSizeChange(mapWidth, v);
-              }}
+              onChange={e => setHeightText(e.target.value)}
+              onBlur={commitHeight}
+              onKeyDown={e => handleKeyDown(e, commitHeight)}
             />
           </div>
         </div>

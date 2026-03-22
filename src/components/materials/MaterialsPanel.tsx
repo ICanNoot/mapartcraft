@@ -25,23 +25,62 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ project, colours
   const totalStacks = Math.ceil(totalBlocks / 64);
   const totalShulkers = Math.ceil(totalStacks / 27);
 
-  const exportMaterialsList = () => {
+  const formatNum = (n: number) => n.toLocaleString('en-US');
+
+  const exportMaterialsTxt = () => {
     if (materials.length === 0) return;
-    const lines = ['Block Name\tCount\tStacks\tShulker Boxes'];
+    // Compute column widths
+    const nameHeader = 'Block Name';
+    const rows = materials.map(m => ({
+      name: m.blockName,
+      count: formatNum(m.count),
+      stacks: formatNum(Math.ceil(m.count / 64)),
+      shulkers: formatNum(Math.ceil(Math.ceil(m.count / 64) / 27)),
+    }));
+    const totalRow = {
+      name: 'TOTAL',
+      count: formatNum(totalBlocks),
+      stacks: formatNum(totalStacks),
+      shulkers: formatNum(totalShulkers),
+    };
+
+    const nameW = Math.max(nameHeader.length, ...rows.map(r => r.name.length), totalRow.name.length) + 2;
+    const countW = Math.max(5, ...rows.map(r => r.count.length), totalRow.count.length);
+    const stackW = Math.max(6, ...rows.map(r => r.stacks.length), totalRow.stacks.length);
+    const shulkW = Math.max(7, ...rows.map(r => r.shulkers.length), totalRow.shulkers.length);
+
+    const pad = (s: string, w: number, right = false) => right ? s.padStart(w) : s.padEnd(w);
+
+    const lines: string[] = [];
+    lines.push(`${pad(nameHeader, nameW)}  ${pad('Count', countW, true)}  ${pad('Stacks', stackW, true)}  ${pad('Shulkers', shulkW, true)}`);
+    lines.push('-'.repeat(nameW + countW + stackW + shulkW + 6));
+    for (const r of rows) {
+      lines.push(`${pad(r.name, nameW)}  ${pad(r.count, countW, true)}  ${pad(r.stacks, stackW, true)}  ${pad(r.shulkers, shulkW, true)}`);
+    }
+    lines.push('-'.repeat(nameW + countW + stackW + shulkW + 6));
+    lines.push(`${pad(totalRow.name, nameW)}  ${pad(totalRow.count, countW, true)}  ${pad(totalRow.stacks, stackW, true)}  ${pad(totalRow.shulkers, shulkW, true)}`);
+
+    downloadText(lines.join('\n'), 'materials.txt', 'text/plain');
+  };
+
+  const exportMaterialsCsv = () => {
+    if (materials.length === 0) return;
+    const lines = ['Block Name,Count,Stacks,Shulker Boxes'];
     for (const m of materials) {
       const stacks = Math.ceil(m.count / 64);
       const shulkers = Math.ceil(stacks / 27);
-      lines.push(`${m.blockName}\t${m.count}\t${stacks}\t${shulkers}`);
+      lines.push(`"${m.blockName}",${m.count},${stacks},${shulkers}`);
     }
-    lines.push('');
-    lines.push(`Total\t${totalBlocks}\t${totalStacks}\t${totalShulkers}`);
+    lines.push(`"Total",${totalBlocks},${totalStacks},${totalShulkers}`);
+    downloadText(lines.join('\n'), 'materials.csv', 'text/csv');
+  };
 
-    const text = lines.join('\n');
-    const blob = new Blob([text], { type: 'text/plain' });
+  const downloadText = (text: string, filename: string, type: string) => {
+    const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'materials.txt';
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -76,7 +115,8 @@ export const MaterialsPanel: React.FC<MaterialsPanelProps> = ({ project, colours
         })}
       </div>
       <div className="materials-actions">
-        <button className="btn" onClick={exportMaterialsList}>Export Materials</button>
+        <button className="btn" onClick={exportMaterialsTxt}>Export .txt</button>
+        <button className="btn" onClick={exportMaterialsCsv}>Export .csv</button>
       </div>
     </div>
   );

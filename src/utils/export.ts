@@ -140,27 +140,21 @@ function generateStaircaseStructure(
   settings: ExportSettings,
   staircaseMode: string
 ): StructureData {
-  const blocks: BlockEntry[] = [];
-  let maxY = 0;
+  const allBlocks: BlockEntry[] = [];
+  const supportBlockName = settings.supportBlockType;
 
   for (let col = 0; col < regionW; col++) {
-    // Noobline block at z=0
-    blocks.push({
-      x: col,
-      y: 0,
-      z: 0,
-      nbtName: settings.supportBlockType,
-      nbtArgs: {},
-    });
-
-    // Calculate heights for this column
+    // Step 1: Calculate raw heights for this column
     const heights: number[] = [];
-    let currentHeight = 1; // Start at 1 above noobline
+    let currentHeight = 0;
 
     for (let row = 0; row < regionH; row++) {
       const globalX = startX + col;
       const globalY = startY + row;
-      if (globalX >= pixelWidth || globalY >= pixelHeight) continue;
+      if (globalX >= pixelWidth || globalY >= pixelHeight) {
+        heights.push(currentHeight);
+        continue;
+      }
 
       const encoded = pixels[globalY * pixelWidth + globalX];
       if (encoded === EMPTY_PIXEL) {
@@ -174,30 +168,29 @@ function generateStaircaseStructure(
         continue;
       }
 
-      // Apply height change based on tone
       if (decoded.tone === 'dark') {
         currentHeight -= 1;
       } else if (decoded.tone === 'light') {
         currentHeight += 1;
       }
-      // normal stays same
 
       heights.push(currentHeight);
     }
 
-    // Normalize based on staircase mode
-    if (staircaseMode === 'classic') {
-      const minH = Math.min(...heights);
-      for (let i = 0; i < heights.length; i++) {
-        heights[i] -= minH;
-      }
-    } else if (staircaseMode === 'valley') {
-      // Valley mode: pull plateaus down
-      normalizeValley(heights);
-    }
-    // full_dark and full_light don't need normalization since tones are uniform
+    // Step 2: Build column block array (noobline + map blocks + support blocks)
+    const columnBlocks: BlockEntry[] = [];
 
-    // Place blocks
+    // Noobline block at z=0, y=0 (relative to this column's height origin)
+    const nooblineY = 0;
+    columnBlocks.push({
+      x: col,
+      y: nooblineY,
+      z: 0,
+      nbtName: supportBlockName,
+      nbtArgs: {},
+    });
+
+    // Map blocks and support blocks
     for (let row = 0; row < heights.length; row++) {
       const globalX = startX + col;
       const globalY = startY + row;
@@ -214,15 +207,14 @@ function generateStaircaseStructure(
       if (!blockInfo) continue;
 
       const y = heights[row];
-      blocks.push({
+      columnBlocks.push({
         x: col,
         y,
-        z: row + 1, // +1 for noobline
+        z: row + 1,
         nbtName: blockInfo.nbtName,
         nbtArgs: blockInfo.nbtArgs,
       });
 
-      // Support blocks
       if (settings.supportBlockMode !== 'none') {
         const needSupport =
           settings.supportBlockMode === 'all_optimized' ||
@@ -230,66 +222,141 @@ function generateStaircaseStructure(
           (settings.supportBlockMode === 'important_only' && blockInfo.supportBlockMandatory);
 
         if (needSupport) {
-          blocks.push({
+          columnBlocks.push({
             x: col,
             y: y - 1,
             z: row + 1,
-            nbtName: settings.supportBlockType,
+            nbtName: supportBlockName,
             nbtArgs: {},
           });
         }
       }
-
-      if (y > maxY) maxY = y;
     }
+
+    // Step 3: Apply normalization
+    if (staircaseMode === 'classic') {
+      normalizeClassic(columnBlocks);
+    } else if (staircaseMode === 'valley') {
+      normalizeValley(columnBlocks, supportBlockName);
+    }
+
+    for (const block of columnBlocks) {
+      allBlocks.push(block);
+    }
+  }
+
+  // Step 4: Global shift so minimum Y = 0
+  let globalMinY = Infinity;
+  for (const block of allBlocks) {
+    if (block.y < globalMinY) globalMinY = block.y;
+  }
+  if (globalMinY < 0) {
+    const shift = -globalMinY;
+    for (const block of allBlocks) {
+      block.y += shift;
+    }
+  }
+
+  // Step 5: Calculate sizeY from actual max Y
+  let globalMaxY = 0;
+  for (const block of allBlocks) {
+    if (block.y > globalMaxY) globalMaxY = block.y;
   }
 
   return {
     sizeX: regionW,
-    sizeY: maxY + 1,
-    sizeZ: regionH + 1, // +1 for noobline
-    blocks,
+    sizeY: globalMaxY + 1,
+    sizeZ: regionH + 1,
+    blocks: allBlocks,
     dataVersion: DATA_VERSION_1_20,
   };
 }
 
 /**
- * Valley normalization: pull ascending plateaus down
+ * Classic normalization: shift all blocks in the column so the minimum Y = 0
  */
-function normalizeValley(heights: number[]) {
-  if (heights.length === 0) return;
+function normalizeClassic(columnBlocks: BlockEntry[]) {
+  let minY = Infinity;
+  for (const block of columnBlocks) {
+    if (block.y < minY) minY = block.y;
+  }
+  if (minY !== 0) {
+    for (const block of columnBlocks) {
+      block.y -= minY;
+    }
+  }
+}
 
-  // Find minimum and shift so min=0
-  const minH = Math.min(...heights);
-  for (let i = 0; i < heights.length; i++) {
-    heights[i] -= minH;
+/**
+ * Valley normalization: plateau detection and pulldown algorithm.
+ * Ported from MapartCraft's nbt.jsworker.
+ * Operates on the finalized block array for a single column.
+ */
+function normalizeValley(columnBlocks: BlockEntry[], supportBlockName: string) {
+  if (columnBlocks.length === 0) return;
+
+  // Sort by Z ascending, then Y descending (so visible map block comes before support blocks at same Z)
+  columnBlocks.sort((a, b) => {
+    if (a.z !== b.z) return a.z - b.z;
+    return b.y - a.y;
+  });
+
+  // Step 1: Identify plateaus
+  const plateaus: { startIndex: number; endIndex: number }[] = [
+    { startIndex: 0, endIndex: 0 }, // dummy zero-width plateau
+  ];
+  let ascending = false;
+  let currentPlateauStartIndex = 0;
+  // visibleBlocksHeight starts at the noobline block's Y (first block after sort, index 0)
+  let visibleBlocksHeight = columnBlocks[0].y;
+
+  for (let i = 0; i < columnBlocks.length; i++) {
+    const block = columnBlocks[i];
+    // Skip scaffold/support blocks
+    if (block.nbtName === supportBlockName) {
+      continue;
+    }
+    if (ascending && block.y < visibleBlocksHeight) {
+      // Dark tone after an ascent — plateau found
+      ascending = false;
+      plateaus.push({ startIndex: currentPlateauStartIndex, endIndex: i });
+    } else if (block.y > visibleBlocksHeight) {
+      ascending = true;
+      currentPlateauStartIndex = i;
+    }
+    visibleBlocksHeight = block.y;
   }
 
-  // Additional valley optimization: find plateau sections and pull them down
-  let i = 0;
-  while (i < heights.length) {
-    // Find start of ascending plateau
-    let plateauStart = i;
-    while (i < heights.length - 1 && heights[i + 1] >= heights[i]) {
-      i++;
-    }
-    let plateauEnd = i;
+  // Sentinel plateau
+  plateaus.push({ startIndex: columnBlocks.length, endIndex: columnBlocks.length });
 
-    // If this plateau is higher than both sides, pull it down
-    if (plateauEnd > plateauStart) {
-      const leftH = plateauStart > 0 ? heights[plateauStart - 1] : 0;
-      const rightH = plateauEnd < heights.length - 1 ? heights[plateauEnd + 1] : 0;
-      const targetH = Math.max(leftH, rightH);
+  // Step 2: Pull down valleys and plateaus
+  const nonPlateauPulldownHeights = [Infinity, Infinity];
 
-      if (heights[plateauStart] > targetH) {
-        const pullDown = heights[plateauStart] - targetH;
-        // Only pull down if it doesn't break relative ordering
-        for (let j = plateauStart; j <= plateauEnd; j++) {
-          heights[j] = Math.max(0, heights[j] - pullDown);
-        }
+  while (plateaus.length > 1) {
+    // Non-plateau section: from plateaus[0].endIndex to plateaus[1].startIndex
+    let pullDownHeight = Infinity;
+    for (let i = plateaus[0].endIndex; i < plateaus[1].startIndex; i++) {
+      if (columnBlocks[i].y < pullDownHeight) {
+        pullDownHeight = columnBlocks[i].y;
       }
     }
-    i++;
+    if (pullDownHeight !== Infinity) {
+      for (let i = plateaus[0].endIndex; i < plateaus[1].startIndex; i++) {
+        columnBlocks[i].y -= pullDownHeight;
+      }
+    } else {
+      pullDownHeight = 0;
+    }
+    nonPlateauPulldownHeights[1] = pullDownHeight;
+
+    const plateauPulldownHeight = Math.min(nonPlateauPulldownHeights[0], nonPlateauPulldownHeights[1]);
+    for (let i = plateaus[0].startIndex; i < plateaus[0].endIndex; i++) {
+      columnBlocks[i].y -= plateauPulldownHeight;
+    }
+
+    plateaus.shift();
+    nonPlateauPulldownHeights[0] = nonPlateauPulldownHeights[1];
   }
 }
 

@@ -809,6 +809,59 @@ html, body, #root {
   border-color: var(--accent);
 }
 
+/* Numeric spinner arrows — stacked ▲/▼ buttons */
+.num-spinner {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.num-spinner button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 11px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-light);
+  color: var(--text-dim);
+  font-size: 7px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.num-spinner button:first-child {
+  border-radius: 2px 2px 0 0;
+  border-bottom: none;
+}
+
+.num-spinner button:last-child {
+  border-radius: 0 0 2px 2px;
+}
+
+.num-spinner button:hover {
+  background: #3a3a5a;
+  color: var(--text);
+}
+
+.num-spinner button:active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Wrapper for input + spinner side by side */
+.input-with-spinner {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.input-with-spinner .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Export dialog */
 .export-file-list {
   background: var(--bg-dark);

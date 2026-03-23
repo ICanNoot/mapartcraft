@@ -11,6 +11,16 @@ interface ExportDialogProps {
   onClose: () => void;
 }
 
+const NumSpinner: React.FC<{
+  onUp: () => void;
+  onDown: () => void;
+}> = ({ onUp, onDown }) => (
+  <div className="num-spinner">
+    <button type="button" tabIndex={-1} onClick={onUp}>&#9650;</button>
+    <button type="button" tabIndex={-1} onClick={onDown}>&#9660;</button>
+  </div>
+);
+
 const SUPPORT_BLOCKS = [
   { name: 'stone', label: 'Stone' },
   { name: 'dirt', label: 'Dirt' },
@@ -90,13 +100,19 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
           {isMapDat ? (
             <div className="form-group">
               <label className="form-label">Starting Map ID</label>
-              <input
-                className="form-input"
-                type="number"
-                min={0}
-                value={settings.startingMapId}
-                onChange={e => update('startingMapId', Math.max(0, parseInt(e.target.value) || 0))}
-              />
+              <div className="input-with-spinner">
+                <input
+                  className="form-input"
+                  type="number"
+                  min={0}
+                  value={settings.startingMapId}
+                  onChange={e => update('startingMapId', Math.max(0, parseInt(e.target.value) || 0))}
+                />
+                <NumSpinner
+                  onUp={() => update('startingMapId', settings.startingMapId + 1)}
+                  onDown={() => update('startingMapId', Math.max(0, settings.startingMapId - 1))}
+                />
+              </div>
             </div>
           ) : (
             <>
@@ -146,30 +162,48 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                 <div className="form-row">
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: 10 }}>X</label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      value={settings.offsetX}
-                      onChange={e => update('offsetX', parseInt(e.target.value) || 0)}
-                    />
+                    <div className="input-with-spinner">
+                      <input
+                        className="form-input"
+                        type="number"
+                        value={settings.offsetX}
+                        onChange={e => update('offsetX', parseInt(e.target.value) || 0)}
+                      />
+                      <NumSpinner
+                        onUp={() => update('offsetX', settings.offsetX + 1)}
+                        onDown={() => update('offsetX', settings.offsetX - 1)}
+                      />
+                    </div>
                   </div>
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: 10 }}>Y</label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      value={settings.offsetY}
-                      onChange={e => update('offsetY', parseInt(e.target.value) || 0)}
-                    />
+                    <div className="input-with-spinner">
+                      <input
+                        className="form-input"
+                        type="number"
+                        value={settings.offsetY}
+                        onChange={e => update('offsetY', parseInt(e.target.value) || 0)}
+                      />
+                      <NumSpinner
+                        onUp={() => update('offsetY', settings.offsetY + 1)}
+                        onDown={() => update('offsetY', settings.offsetY - 1)}
+                      />
+                    </div>
                   </div>
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: 10 }}>Z</label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      value={settings.offsetZ}
-                      onChange={e => update('offsetZ', parseInt(e.target.value) || 0)}
-                    />
+                    <div className="input-with-spinner">
+                      <input
+                        className="form-input"
+                        type="number"
+                        value={settings.offsetZ}
+                        onChange={e => update('offsetZ', parseInt(e.target.value) || 0)}
+                      />
+                      <NumSpinner
+                        onUp={() => update('offsetZ', settings.offsetZ + 1)}
+                        onDown={() => update('offsetZ', settings.offsetZ - 1)}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>

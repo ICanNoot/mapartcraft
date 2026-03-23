@@ -29,12 +29,23 @@ const versionEntries = Object.values(supportedVersions as Record<string, { MCVer
  * Slider + editable number input combo.
  * Slider drags trigger debounced updates; typed input applies on blur/Enter.
  */
+const NumSpinner: React.FC<{
+  onUp: () => void;
+  onDown: () => void;
+}> = ({ onUp, onDown }) => (
+  <div className="num-spinner">
+    <button type="button" tabIndex={-1} onClick={onUp}>&#9650;</button>
+    <button type="button" tabIndex={-1} onClick={onDown}>&#9660;</button>
+  </div>
+);
+
 const SliderWithInput: React.FC<{
   value: number;
   min: number;
   max: number;
+  step?: number;
   onChange: (value: number, debounce: boolean) => void;
-}> = ({ value, min, max, onChange }) => {
+}> = ({ value, min, max, step = 5, onChange }) => {
   const [text, setText] = useState(String(value));
 
   useEffect(() => { setText(String(value)); }, [value]);
@@ -46,6 +57,11 @@ const SliderWithInput: React.FC<{
     setText(String(clamped));
     if (clamped !== value) onChange(clamped, false);
   }, [text, value, min, max, onChange]);
+
+  const nudge = useCallback((dir: 1 | -1) => {
+    const next = Math.max(min, Math.min(max, value + dir * step));
+    if (next !== value) onChange(next, false);
+  }, [value, min, max, step, onChange]);
 
   return (
     <div className="slider-row">
@@ -68,6 +84,7 @@ const SliderWithInput: React.FC<{
           if (e.key === 'Enter') { e.preventDefault(); commit(); (e.target as HTMLInputElement).blur(); }
         }}
       />
+      <NumSpinner onUp={() => nudge(1)} onDown={() => nudge(-1)} />
     </div>
   );
 };
@@ -116,29 +133,41 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         <div className="form-row">
           <div className="form-group">
             <label className="form-label">Width</label>
-            <input
-              className="form-input"
-              type="text"
-              inputMode="numeric"
-              value={widthText}
-              disabled={!hasSourceImage}
-              onChange={e => setWidthText(e.target.value)}
-              onBlur={commitWidth}
-              onKeyDown={e => handleKeyDown(e, commitWidth)}
-            />
+            <div className="input-with-spinner">
+              <input
+                className="form-input"
+                type="text"
+                inputMode="numeric"
+                value={widthText}
+                disabled={!hasSourceImage}
+                onChange={e => setWidthText(e.target.value)}
+                onBlur={commitWidth}
+                onKeyDown={e => handleKeyDown(e, commitWidth)}
+              />
+              <NumSpinner
+                onUp={() => { const v = Math.min(50, mapWidth + 1); if (v !== mapWidth) onMapSizeChange(v, mapHeight); }}
+                onDown={() => { const v = Math.max(1, mapWidth - 1); if (v !== mapWidth) onMapSizeChange(v, mapHeight); }}
+              />
+            </div>
           </div>
           <div className="form-group">
             <label className="form-label">Height</label>
-            <input
-              className="form-input"
-              type="text"
-              inputMode="numeric"
-              value={heightText}
-              disabled={!hasSourceImage}
-              onChange={e => setHeightText(e.target.value)}
-              onBlur={commitHeight}
-              onKeyDown={e => handleKeyDown(e, commitHeight)}
-            />
+            <div className="input-with-spinner">
+              <input
+                className="form-input"
+                type="text"
+                inputMode="numeric"
+                value={heightText}
+                disabled={!hasSourceImage}
+                onChange={e => setHeightText(e.target.value)}
+                onBlur={commitHeight}
+                onKeyDown={e => handleKeyDown(e, commitHeight)}
+              />
+              <NumSpinner
+                onUp={() => { const v = Math.min(50, mapHeight + 1); if (v !== mapHeight) onMapSizeChange(mapWidth, v); }}
+                onDown={() => { const v = Math.max(1, mapHeight - 1); if (v !== mapHeight) onMapSizeChange(mapWidth, v); }}
+              />
+            </div>
           </div>
         </div>
       </div>

@@ -119,10 +119,10 @@ export const DATA_VERSION_1_20 = 3463;
 export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   mapMode: 'flat',
   staircaseMode: 'classic',
-  ditherMethod: 'none',
+  ditherMethod: 'floyd_steinberg',
   resizeAlgorithm: 'bilinear',
   betterColour: false,
-  carpetOnly: false,
+  carpetOnly: true,
   brightness: 0,
   contrast: 0,
   saturation: 0,

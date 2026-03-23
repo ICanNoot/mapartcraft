@@ -236,7 +236,22 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       </div>
 
       <div className="settings-section">
-        <div className="settings-section-title">Preprocessing</div>
+        <div className="settings-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          Preprocessing
+          {(settings.brightness !== 0 || settings.contrast !== 0 || settings.saturation !== 0) && (
+            <button
+              className="palette-filter-btn"
+              style={{ fontSize: 10, padding: '1px 6px', margin: 0 }}
+              onClick={() => {
+                onSettingChange('brightness', 0);
+                onSettingChange('contrast', 0);
+                onSettingChange('saturation', 0);
+              }}
+            >
+              Reset
+            </button>
+          )}
+        </div>
 
         <div className="form-group">
           <label className="form-label">Brightness</label>

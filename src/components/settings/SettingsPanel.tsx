@@ -1,6 +1,6 @@
 // Conversion settings panel — adjustable at any time, triggers live re-conversion
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ConversionSettings, MapMode, StaircaseMode, DitherMethod, ResizeAlgorithm, CanvasBackground,
 } from '../../types';
@@ -24,6 +24,53 @@ const versionEntries = Object.values(supportedVersions as Record<string, { MCVer
     }
     return 0;
   });
+
+/**
+ * Slider + editable number input combo.
+ * Slider drags trigger debounced updates; typed input applies on blur/Enter.
+ */
+const SliderWithInput: React.FC<{
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number, debounce: boolean) => void;
+}> = ({ value, min, max, onChange }) => {
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => { setText(String(value)); }, [value]);
+
+  const commit = useCallback(() => {
+    const v = parseInt(text);
+    if (isNaN(v) || text.trim() === '') { setText(String(value)); return; }
+    const clamped = Math.max(min, Math.min(max, v));
+    setText(String(clamped));
+    if (clamped !== value) onChange(clamped, false);
+  }, [text, value, min, max, onChange]);
+
+  return (
+    <div className="slider-row">
+      <input
+        type="range"
+        className="form-slider"
+        min={min}
+        max={max}
+        value={value}
+        onChange={e => onChange(parseInt(e.target.value), true)}
+      />
+      <input
+        type="text"
+        inputMode="numeric"
+        className="slider-number-input"
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); (e.target as HTMLInputElement).blur(); }
+        }}
+      />
+    </div>
+  );
+};
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   settings, hasSourceImage, mapWidth, mapHeight,
@@ -193,47 +240,32 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
         <div className="form-group">
           <label className="form-label">Brightness</label>
-          <div className="slider-row">
-            <input
-              type="range"
-              className="form-slider"
-              min={-100}
-              max={100}
-              value={settings.brightness}
-              onChange={e => onSettingChange('brightness', parseInt(e.target.value), true)}
-            />
-            <span className="slider-value">{settings.brightness}</span>
-          </div>
+          <SliderWithInput
+            value={settings.brightness}
+            min={-100}
+            max={100}
+            onChange={(v, debounce) => onSettingChange('brightness', v, debounce)}
+          />
         </div>
 
         <div className="form-group">
           <label className="form-label">Contrast</label>
-          <div className="slider-row">
-            <input
-              type="range"
-              className="form-slider"
-              min={-100}
-              max={100}
-              value={settings.contrast}
-              onChange={e => onSettingChange('contrast', parseInt(e.target.value), true)}
-            />
-            <span className="slider-value">{settings.contrast}</span>
-          </div>
+          <SliderWithInput
+            value={settings.contrast}
+            min={-100}
+            max={100}
+            onChange={(v, debounce) => onSettingChange('contrast', v, debounce)}
+          />
         </div>
 
         <div className="form-group" style={{ marginBottom: 0 }}>
           <label className="form-label">Saturation</label>
-          <div className="slider-row">
-            <input
-              type="range"
-              className="form-slider"
-              min={-100}
-              max={100}
-              value={settings.saturation}
-              onChange={e => onSettingChange('saturation', parseInt(e.target.value), true)}
-            />
-            <span className="slider-value">{settings.saturation}</span>
-          </div>
+          <SliderWithInput
+            value={settings.saturation}
+            min={-100}
+            max={100}
+            onChange={(v, debounce) => onSettingChange('saturation', v, debounce)}
+          />
         </div>
       </div>
 
@@ -254,17 +286,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         {settings.transparencyEnabled && (
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">Alpha Threshold</label>
-            <div className="slider-row">
-              <input
-                type="range"
-                className="form-slider"
-                min={0}
-                max={255}
-                value={settings.transparencyThreshold}
-                onChange={e => onSettingChange('transparencyThreshold', parseInt(e.target.value), true)}
-              />
-              <span className="slider-value">{settings.transparencyThreshold}</span>
-            </div>
+            <SliderWithInput
+              value={settings.transparencyThreshold}
+              min={0}
+              max={255}
+              onChange={(v, debounce) => onSettingChange('transparencyThreshold', v, debounce)}
+            />
           </div>
         )}
       </div>

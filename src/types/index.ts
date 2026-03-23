@@ -142,6 +142,9 @@ export interface ExportSettings {
   version: string;
   exportFormat: ExportFormat;
   startingMapId: number; // For map.dat export
+  offsetX: number;
+  offsetY: number;
+  offsetZ: number;
 }
 
 export interface MaterialEntry {

@@ -365,15 +365,41 @@ export function useAppState() {
     });
   }, [runConversion, pushHistory]);
 
+  // Store pre-carpet block choices so we can restore on toggle off
+  const preCarpetChoicesRef = useRef<Record<number, number>>({});
+
   const updateConversionSetting = useCallback(<K extends keyof ConversionSettings>(
     key: K, value: ConversionSettings[K], debounce?: boolean
   ) => {
     setState(prev => {
       if (!prev.project) return prev;
+      let blockChoices = prev.project.blockChoices;
+
+      // When toggling carpetOnly, update blockChoices accordingly
+      if (key === 'carpetOnly' && prev.coloursData) {
+        if (value === true) {
+          // Save current choices, then set carpet blocks
+          preCarpetChoicesRef.current = { ...blockChoices };
+          const newChoices = { ...blockChoices };
+          for (const [csIdStr, cs] of Object.entries(prev.coloursData)) {
+            const carpetIdx = findCarpetBlockIndex(cs);
+            if (carpetIdx !== null) {
+              newChoices[parseInt(csIdStr)] = carpetIdx;
+            }
+          }
+          blockChoices = newChoices;
+        } else {
+          // Restore previous choices
+          blockChoices = { ...preCarpetChoicesRef.current };
+          preCarpetChoicesRef.current = {};
+        }
+      }
+
       return {
         ...prev,
         project: {
           ...prev.project,
+          blockChoices,
           conversionSettings: { ...prev.project.conversionSettings, [key]: value },
         },
       };

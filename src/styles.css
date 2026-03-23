@@ -791,6 +791,24 @@ html, body, #root {
   color: var(--text);
 }
 
+.slider-number-input {
+  width: 44px;
+  padding: 2px 4px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: right;
+  outline: none;
+  flex-shrink: 0;
+}
+
+.slider-number-input:focus {
+  border-color: var(--accent);
+}
+
 /* Export dialog */
 .export-file-list {
   background: var(--bg-dark);

@@ -30,6 +30,9 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     version: '1.20',
     exportFormat: 'schematic',
     startingMapId: 0,
+    offsetX: 0,
+    offsetY: 0,
+    offsetZ: 0,
   });
 
   const update = <K extends keyof ExportSettings>(key: K, value: ExportSettings[K]) => {
@@ -137,6 +140,39 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                   </select>
                 </div>
               )}
+
+              <div className="form-group">
+                <label className="form-label">Position Offset</label>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: 10 }}>X</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      value={settings.offsetX}
+                      onChange={e => update('offsetX', parseInt(e.target.value) || 0)}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: 10 }}>Y</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      value={settings.offsetY}
+                      onChange={e => update('offsetY', parseInt(e.target.value) || 0)}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: 10 }}>Z</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      value={settings.offsetZ}
+                      onChange={e => update('offsetZ', parseInt(e.target.value) || 0)}
+                    />
+                  </div>
+                </div>
+              </div>
             </>
           )}
 

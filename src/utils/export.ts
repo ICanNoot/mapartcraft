@@ -78,7 +78,7 @@ function generateFlatStructure(
       blocks.push({
         x: px,
         y: baseY,
-        z: py,
+        z: py + 1, // +1 to match MapartCraft convention (noobline at Z=0)
         nbtName: blockInfo.nbtName,
         nbtArgs: blockInfo.nbtArgs,
       });
@@ -94,7 +94,7 @@ function generateFlatStructure(
           blocks.push({
             x: px,
             y: baseY - 1,
-            z: py,
+            z: py + 1,
             nbtName: settings.supportBlockType,
             nbtArgs: {},
           });
@@ -103,7 +103,7 @@ function generateFlatStructure(
             blocks.push({
               x: px,
               y: baseY - 2,
-              z: py,
+              z: py + 1,
               nbtName: settings.supportBlockType,
               nbtArgs: {},
             });
@@ -113,14 +113,30 @@ function generateFlatStructure(
     }
   }
 
-  let sizeY = 3; // Y=0,1,2
-  if (settings.supportBlockMode === 'none') sizeY = 3;
-  if (settings.supportBlockMode === 'all_double_optimized') sizeY = 3;
+  // Apply user-specified offsets
+  const ox = settings.offsetX || 0;
+  const oy = settings.offsetY || 0;
+  const oz = settings.offsetZ || 0;
+  if (ox !== 0 || oy !== 0 || oz !== 0) {
+    for (const block of blocks) {
+      block.x += ox;
+      block.y += oy;
+      block.z += oz;
+    }
+  }
+
+  // Calculate sizes from actual block positions
+  let maxX = 0, maxY = 0, maxZ = 0;
+  for (const block of blocks) {
+    if (block.x > maxX) maxX = block.x;
+    if (block.y > maxY) maxY = block.y;
+    if (block.z > maxZ) maxZ = block.z;
+  }
 
   return {
-    sizeX: regionW,
-    sizeY,
-    sizeZ: regionH,
+    sizeX: maxX + 1,
+    sizeY: maxY + 1,
+    sizeZ: maxZ + 1,
     blocks,
     dataVersion: DATA_VERSION_1_20,
   };
@@ -257,16 +273,30 @@ function generateStaircaseStructure(
     }
   }
 
-  // Step 5: Calculate sizeY from actual max Y
-  let globalMaxY = 0;
+  // Apply user-specified offsets
+  const ox = settings.offsetX || 0;
+  const oy = settings.offsetY || 0;
+  const oz = settings.offsetZ || 0;
+  if (ox !== 0 || oy !== 0 || oz !== 0) {
+    for (const block of allBlocks) {
+      block.x += ox;
+      block.y += oy;
+      block.z += oz;
+    }
+  }
+
+  // Step 5: Calculate sizes from actual block positions
+  let maxX = 0, maxY = 0, maxZ = 0;
   for (const block of allBlocks) {
-    if (block.y > globalMaxY) globalMaxY = block.y;
+    if (block.x > maxX) maxX = block.x;
+    if (block.y > maxY) maxY = block.y;
+    if (block.z > maxZ) maxZ = block.z;
   }
 
   return {
-    sizeX: regionW,
-    sizeY: globalMaxY + 1,
-    sizeZ: regionH + 1,
+    sizeX: maxX + 1,
+    sizeY: maxY + 1,
+    sizeZ: maxZ + 1,
     blocks: allBlocks,
     dataVersion: DATA_VERSION_1_20,
   };

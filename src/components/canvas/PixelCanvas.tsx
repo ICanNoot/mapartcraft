@@ -444,6 +444,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
+    if (isPanning.current) return;
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
     const newZoom = Math.max(0.1, Math.min(64, zoom * factor));
 

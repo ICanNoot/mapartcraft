@@ -36,6 +36,23 @@ interface BlockPickerInfo {
   blocks: { index: number; displayName: string }[];
 }
 
+/**
+ * Convert RGB (0-255) to HSL. Returns [hue (0-360), saturation (0-1), lightness (0-1)].
+ */
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return [h * 360, s, l];
+}
+
 export const PalettePanel: React.FC<PalettePanelProps> = ({
   palette, coloursData, selectedColourSetId, selectedTone,
   mapMode, carpetOnly, blockChoices, disabledColourSets,
@@ -50,7 +67,7 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
   // Build full list of all colour sets (including disabled ones for the enable/disable UI)
   const allColourSets = useMemo(() => {
     if (!coloursData) return [];
-    const sets: { csId: number; name: string; entries: PaletteEntry[]; disabled: boolean }[] = [];
+    const sets: { csId: number; name: string; entries: PaletteEntry[]; disabled: boolean; hue: number; sat: number; light: number }[] = [];
 
     // Build a map of palette entries per colour set
     const csMap = new Map<number, PaletteEntry[]>();
@@ -93,8 +110,27 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
 
       if (entries.length === 0) continue;
 
-      sets.push({ csId, name: cs.colourName || `Colour ${csId}`, entries, disabled: isDisabled });
+      // Compute HSL from the normal tone (or first available tone) for sorting
+      const normalEntry = entries.find(e => e.tone === 'normal') || entries[0];
+      const [h, s, l] = rgbToHsl(normalEntry.rgb[0], normalEntry.rgb[1], normalEntry.rgb[2]);
+
+      sets.push({
+        csId, name: cs.colourName || `Colour ${csId}`, entries, disabled: isDisabled,
+        hue: h, sat: s, light: l,
+      });
     }
+
+    // Sort: greyscale (saturation < 10%) at end sorted by lightness,
+    // chromatic sorted by hue then lightness
+    const GREY_THRESHOLD = 0.10;
+    sets.sort((a, b) => {
+      const aGrey = a.sat < GREY_THRESHOLD;
+      const bGrey = b.sat < GREY_THRESHOLD;
+      if (aGrey !== bGrey) return aGrey ? 1 : -1; // greys at end
+      if (aGrey && bGrey) return a.light - b.light; // greys by lightness
+      if (a.hue !== b.hue) return a.hue - b.hue; // by hue
+      return a.light - b.light; // within same hue, by lightness
+    });
 
     return sets;
   }, [coloursData, palette, searchQuery, disabledSet, carpetOnly, mapMode]);

@@ -65,13 +65,11 @@ const App: React.FC = () => {
             if (state.selection) { e.preventDefault(); copySelection(); }
             return;
           case 'v':
-            e.preventDefault();
             if (state.clipboard) {
+              e.preventDefault();
               pasteClipboard(state.selection?.x ?? 0, state.selection?.y ?? 0);
-            } else {
-              // Try clipboard image paste
-              handleClipboardPaste();
             }
+            // If no internal clipboard, let the native paste event handle image paste
             return;
           case 's':
             e.preventDefault();
@@ -105,24 +103,27 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [state.zoom, state.selection, state.clipboard, state.project, setTool, undo, redo, copySelection, pasteClipboard, deleteSelection, saveProject, openExportDialog, setZoom]);
 
-  // Clipboard image paste
-  const handleClipboardPaste = useCallback(async () => {
-    try {
-      const clipboardItems = await navigator.clipboard.read();
-      for (const item of clipboardItems) {
-        for (const type of item.types) {
-          if (type.startsWith('image/')) {
-            const blob = await item.getType(type);
-            const file = new File([blob], 'clipboard.png', { type });
-            const img = await loadImage(file);
+  // Clipboard image paste — listen for native paste event for immediate loading
+  useEffect(() => {
+    const handlePaste = async (e: ClipboardEvent) => {
+      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          e.preventDefault();
+          const blob = items[i].getAsFile();
+          if (!blob) continue;
+          try {
+            const img = await loadImage(blob);
             importImage(img);
-            return;
-          }
+          } catch { /* ignore */ }
+          return;
         }
       }
-    } catch {
-      // Clipboard API not available or permission denied — ignore
-    }
+    };
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
   }, [importImage]);
 
   const fitToWindow = useCallback(() => {

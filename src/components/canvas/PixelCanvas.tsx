@@ -1,4 +1,4 @@
-// Canvas-based pixel editor with zoom, pan, and tool interaction
+// Canvas-based pixel editor with zoom, pan, tool interaction, split view, and difference overlay
 
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import {
@@ -37,6 +37,10 @@ interface PixelCanvasProps {
   selection: SelectionRect | null;
   canvasBackground: CanvasBackground;
   customBackgroundColour: string;
+  showBeforeAfter: boolean;
+  splitViewMode: boolean;
+  splitViewPosition: number;
+  showDifferenceOverlay: boolean;
   onZoomChange: (zoom: number) => void;
   onPanChange: (x: number, y: number) => void;
   onCursorChange: (x: number, y: number) => void;
@@ -45,6 +49,8 @@ interface PixelCanvasProps {
   onFill: (x: number, y: number, colourSetId: number, tone: ToneVariant) => void;
   onEyedrop: (colourSetId: number, tone: ToneVariant) => void;
   onSelectionChange: (sel: SelectionRect | null) => void;
+  onContextMenu: (x: number, y: number) => void;
+  onSplitPositionChange: (pos: number) => void;
 }
 
 export const PixelCanvas: React.FC<PixelCanvasProps> = ({
@@ -52,9 +58,10 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
   showGrid, showMapBorders, activeTool, brushSize,
   selectedColourSetId, selectedTone, selection,
   canvasBackground, customBackgroundColour,
+  showBeforeAfter, splitViewMode, splitViewPosition, showDifferenceOverlay,
   onZoomChange, onPanChange, onCursorChange,
   onPixelsBatch, onCommitPixels, onFill, onEyedrop,
-  onSelectionChange,
+  onSelectionChange, onContextMenu, onSplitPositionChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -62,13 +69,22 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
   const isPanning = useRef(false);
   const isDrawing = useRef(false);
   const isSelecting = useRef(false);
+  const isDraggingSplit = useRef(false);
   const lastPanPos = useRef({ x: 0, y: 0 });
   const lastDrawPos = useRef<{ x: number; y: number } | null>(null);
   const selectionStart = useRef<{ x: number; y: number } | null>(null);
   const spaceHeld = useRef(false);
+  const ctrlHeld = useRef(false);
+  const shiftHeld = useRef(false);
   const rafId = useRef<number>(0);
   const needsRedraw = useRef(true);
   const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const srcCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [cursorPixel, setCursorPixel] = useState<{ x: number; y: number }>({ x: -1, y: -1 });
+
+  // Track previous tool for Ctrl+click eyedropper
+  const prevToolRef = useRef<ToolType>(activeTool);
+  const tempEyedropRef = useRef(false);
 
   // Precompute colour lookup from coloursData
   const colourLookup = useRef<Map<number, [number, number, number]>>(new Map());
@@ -90,10 +106,25 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     needsRedraw.current = true;
   }, [coloursData]);
 
+  // Cache source image as canvas for split view / before-after
+  useEffect(() => {
+    if (!project.sourceImageData) {
+      srcCanvasRef.current = null;
+      return;
+    }
+    const c = document.createElement('canvas');
+    c.width = project.sourceImageData.width;
+    c.height = project.sourceImageData.height;
+    c.getContext('2d')!.putImageData(project.sourceImageData, 0, 0);
+    srcCanvasRef.current = c;
+  }, [project.sourceImageData]);
+
   // Mark for redraw when relevant state changes
   useEffect(() => {
     needsRedraw.current = true;
-  }, [project.pixels, zoom, panX, panY, showGrid, showMapBorders, selection, canvasBackground, customBackgroundColour]);
+  }, [project.pixels, zoom, panX, panY, showGrid, showMapBorders, selection,
+      canvasBackground, customBackgroundColour, showBeforeAfter, splitViewMode,
+      splitViewPosition, showDifferenceOverlay]);
 
   // Main render loop
   useEffect(() => {
@@ -136,17 +167,16 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       const endPxX = Math.min(pixelWidth, Math.ceil((cw - offsetX) / zoom));
       const endPxY = Math.min(pixelHeight, Math.ceil((ch - offsetY) / zoom));
 
-      // Draw pixels using ImageData buffer at all zoom levels
       const lookup = colourLookup.current;
       const imgW = endPxX - startPxX;
       const imgH = endPxY - startPxY;
-      if (imgW > 0 && imgH > 0) {
-        const imgData = ctx.createImageData(imgW, imgH);
-        const data = imgData.data;
 
-        // Compute background colours for empty pixels
+      // Determine whether to show source image
+      const showSource = showBeforeAfter && srcCanvasRef.current;
+
+      if (imgW > 0 && imgH > 0) {
+        // Compute background
         const isCheckerboard = canvasBackground === 'checkerboard';
-        // Checkerboard: 8x8 screen-pixel squares, so size in map-pixels depends on zoom
         const checkerSize = Math.max(1, Math.round(8 / zoom));
         let bgR = 26, bgG = 25, bgB = 23;
         if (!isCheckerboard) {
@@ -158,50 +188,159 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
           }
         }
 
-        for (let py = 0; py < imgH; py++) {
-          for (let px = 0; px < imgW; px++) {
-            const encoded = pixels[(startPxY + py) * pixelWidth + (startPxX + px)];
-            const idx = (py * imgW + px) * 4;
-            if (encoded === EMPTY_PIXEL) {
-              if (isCheckerboard) {
-                const cx = Math.floor((startPxX + px) / checkerSize);
-                const cy = Math.floor((startPxY + py) / checkerSize);
-                const light = (cx + cy) % 2 === 0;
-                data[idx] = light ? 204 : 153;
-                data[idx + 1] = light ? 204 : 153;
-                data[idx + 2] = light ? 204 : 153;
+        // Helper: render pixel buffer
+        const renderPixels = (sourceImageData?: ImageData | null): ImageData => {
+          const imgData = ctx.createImageData(imgW, imgH);
+          const data = imgData.data;
+          const srcData = sourceImageData?.data;
+          const srcW = sourceImageData?.width ?? 0;
+
+          for (let py = 0; py < imgH; py++) {
+            for (let px = 0; px < imgW; px++) {
+              const idx = (py * imgW + px) * 4;
+              const worldX = startPxX + px;
+              const worldY = startPxY + py;
+
+              if (srcData && worldX < srcW && worldY < (sourceImageData?.height ?? 0)) {
+                const si = (worldY * srcW + worldX) * 4;
+                data[idx] = srcData[si];
+                data[idx + 1] = srcData[si + 1];
+                data[idx + 2] = srcData[si + 2];
+                data[idx + 3] = 255;
               } else {
-                data[idx] = bgR; data[idx + 1] = bgG; data[idx + 2] = bgB;
+                const encoded = pixels[worldY * pixelWidth + worldX];
+                if (encoded === EMPTY_PIXEL) {
+                  if (isCheckerboard) {
+                    const cx = Math.floor(worldX / checkerSize);
+                    const cy = Math.floor(worldY / checkerSize);
+                    const light = (cx + cy) % 2 === 0;
+                    data[idx] = light ? 204 : 153;
+                    data[idx + 1] = light ? 204 : 153;
+                    data[idx + 2] = light ? 204 : 153;
+                  } else {
+                    data[idx] = bgR; data[idx + 1] = bgG; data[idx + 2] = bgB;
+                  }
+                  data[idx + 3] = 255;
+                } else {
+                  const rgb = lookup.get(encoded);
+                  if (rgb) {
+                    data[idx] = rgb[0]; data[idx + 1] = rgb[1]; data[idx + 2] = rgb[2]; data[idx + 3] = 255;
+                  } else {
+                    data[idx] = bgR; data[idx + 1] = bgG; data[idx + 2] = bgB; data[idx + 3] = 255;
+                  }
+                }
               }
-              data[idx + 3] = 255;
-              continue;
-            }
-            const rgb = lookup.get(encoded);
-            if (rgb) {
-              data[idx] = rgb[0]; data[idx + 1] = rgb[1]; data[idx + 2] = rgb[2]; data[idx + 3] = 255;
-            } else {
-              data[idx] = bgR; data[idx + 1] = bgG; data[idx + 2] = bgB; data[idx + 3] = 255;
             }
           }
-        }
+          return imgData;
+        };
 
-        // Reuse cached temp canvas, only resize when needed
-        if (!tempCanvasRef.current) {
-          tempCanvasRef.current = document.createElement('canvas');
-        }
+        // Reuse temp canvas
+        if (!tempCanvasRef.current) tempCanvasRef.current = document.createElement('canvas');
         const tempCanvas = tempCanvasRef.current;
         if (tempCanvas.width !== imgW || tempCanvas.height !== imgH) {
           tempCanvas.width = imgW;
           tempCanvas.height = imgH;
         }
-        tempCanvas.getContext('2d')!.putImageData(imgData, 0, 0);
-
+        const tempCtx = tempCanvas.getContext('2d')!;
         ctx.imageSmoothingEnabled = false;
+
         const dx = Math.floor(offsetX + startPxX * zoom);
         const dy = Math.floor(offsetY + startPxY * zoom);
         const dw = Math.ceil(imgW * zoom);
         const dh = Math.ceil(imgH * zoom);
-        ctx.drawImage(tempCanvas, dx, dy, dw, dh);
+
+        if (showSource && !splitViewMode) {
+          // Full before-after: show source image
+          const imgData = renderPixels(project.sourceImageData);
+          tempCtx.putImageData(imgData, 0, 0);
+          ctx.drawImage(tempCanvas, dx, dy, dw, dh);
+        } else if (splitViewMode && srcCanvasRef.current) {
+          // Split view: left = source, right = converted
+          const splitScreenX = cw * splitViewPosition;
+
+          // Draw converted side (full)
+          const convertedData = renderPixels(null);
+          tempCtx.putImageData(convertedData, 0, 0);
+          ctx.drawImage(tempCanvas, dx, dy, dw, dh);
+
+          // Clip left side and draw source
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, 0, splitScreenX, ch);
+          ctx.clip();
+          const sourceData = renderPixels(project.sourceImageData);
+          tempCtx.putImageData(sourceData, 0, 0);
+          ctx.drawImage(tempCanvas, dx, dy, dw, dh);
+          ctx.restore();
+
+          // Draw split divider
+          octx.strokeStyle = 'var(--accent)';
+          octx.lineWidth = 2;
+          octx.beginPath();
+          octx.moveTo(splitScreenX, 0);
+          octx.lineTo(splitScreenX, ch);
+          octx.stroke();
+
+          // Handle
+          octx.fillStyle = 'rgba(232, 220, 200, 0.8)';
+          octx.beginPath();
+          octx.roundRect(splitScreenX - 8, ch / 2 - 20, 16, 40, 4);
+          octx.fill();
+        } else {
+          // Normal view
+          const imgData = renderPixels(null);
+          tempCtx.putImageData(imgData, 0, 0);
+          ctx.drawImage(tempCanvas, dx, dy, dw, dh);
+        }
+
+        // Difference overlay
+        if (showDifferenceOverlay && project.sourceImageData && !showSource) {
+          const srcData = project.sourceImageData.data;
+          const srcW = project.sourceImageData.width;
+          const srcH = project.sourceImageData.height;
+          const diffImgData = ctx.createImageData(imgW, imgH);
+          const diffData = diffImgData.data;
+
+          for (let py = 0; py < imgH; py++) {
+            for (let px = 0; px < imgW; px++) {
+              const worldX = startPxX + px;
+              const worldY = startPxY + py;
+              const idx = (py * imgW + px) * 4;
+
+              if (worldX >= srcW || worldY >= srcH) {
+                diffData[idx + 3] = 0;
+                continue;
+              }
+
+              const si = (worldY * srcW + worldX) * 4;
+              const sr = srcData[si], sg = srcData[si + 1], sb = srcData[si + 2];
+
+              const encoded = pixels[worldY * pixelWidth + worldX];
+              const rgb = encoded !== EMPTY_PIXEL ? lookup.get(encoded) : null;
+              if (!rgb) { diffData[idx + 3] = 0; continue; }
+
+              // Euclidean RGB distance
+              const dr = sr - rgb[0], dg = sg - rgb[1], db = sb - rgb[2];
+              const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+              const maxDist = 441.67; // sqrt(255^2 * 3)
+              const alpha = Math.min(255, Math.floor((dist / maxDist) * 512));
+
+              diffData[idx] = 232;     // warm accent red
+              diffData[idx + 1] = 92;
+              diffData[idx + 2] = 92;
+              diffData[idx + 3] = alpha;
+            }
+          }
+
+          const diffTempCanvas = document.createElement('canvas');
+          diffTempCanvas.width = imgW;
+          diffTempCanvas.height = imgH;
+          diffTempCanvas.getContext('2d')!.putImageData(diffImgData, 0, 0);
+          ctx.globalAlpha = 0.6;
+          ctx.drawImage(diffTempCanvas, dx, dy, dw, dh);
+          ctx.globalAlpha = 1;
+        }
       }
 
       // Draw canvas border
@@ -212,7 +351,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
         Math.ceil(pixelWidth * zoom), Math.ceil(pixelHeight * zoom)
       );
 
-      // Grid lines (only at zoom >= 8 to avoid excessive line count at lower zooms)
+      // Grid lines
       if (showGrid && zoom >= 8) {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
         ctx.lineWidth = 1;
@@ -267,11 +406,30 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
         octx.strokeRect(sx + 0.5, sy + 0.5, sw, sh);
         octx.setLineDash([]);
       }
+
+      // Shift+draw preview line
+      if (shiftHeld.current && lastDrawPos.current && cursorPixel.x >= 0 &&
+          (activeTool === 'pencil' || activeTool === 'eraser')) {
+        const fromX = Math.floor(offsetX + (lastDrawPos.current.x + 0.5) * zoom);
+        const fromY = Math.floor(offsetY + (lastDrawPos.current.y + 0.5) * zoom);
+        const toX = Math.floor(offsetX + (cursorPixel.x + 0.5) * zoom);
+        const toY = Math.floor(offsetY + (cursorPixel.y + 0.5) * zoom);
+        octx.strokeStyle = 'rgba(232, 220, 200, 0.5)';
+        octx.lineWidth = 1;
+        octx.setLineDash([4, 4]);
+        octx.beginPath();
+        octx.moveTo(fromX, fromY);
+        octx.lineTo(toX, toY);
+        octx.stroke();
+        octx.setLineDash([]);
+      }
     };
 
     rafId.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(rafId.current);
-  }, [project, zoom, panX, panY, showGrid, showMapBorders, selection, coloursData, canvasBackground, customBackgroundColour]);
+  }, [project, zoom, panX, panY, showGrid, showMapBorders, selection, coloursData,
+      canvasBackground, customBackgroundColour, showBeforeAfter, splitViewMode,
+      splitViewPosition, showDifferenceOverlay, cursorPixel, activeTool]);
 
   // Convert screen coords to pixel coords
   const screenToPixel = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
@@ -310,7 +468,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     }
   }, [project, brushSize, selectedColourSetId, selectedTone, onPixelsBatch]);
 
-  // Draw line between two points (for drag drawing)
+  // Draw line between two points
   const drawLine = useCallback((x0: number, y0: number, x1: number, y1: number, erase: boolean) => {
     const dx = Math.abs(x1 - x0);
     const dy = Math.abs(y1 - y0);
@@ -358,7 +516,45 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       return;
     }
 
+    // Check if clicking on split divider
+    if (splitViewMode && e.button === 0) {
+      const container = containerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const splitX = container.clientWidth * splitViewPosition;
+        if (Math.abs(sx - splitX) < 12) {
+          isDraggingSplit.current = true;
+          e.preventDefault();
+          return;
+        }
+      }
+    }
+
     if (e.button !== 0) return;
+
+    // Ctrl+click = temporary eyedropper
+    if (ctrlHeld.current && activeTool !== 'eyedropper') {
+      if (px >= 0 && px < project.pixelWidth && py >= 0 && py < project.pixelHeight) {
+        const encoded = project.pixels[py * project.pixelWidth + px];
+        const decoded = decodePixel(encoded);
+        if (decoded) {
+          onEyedrop(decoded.colourSetId, decoded.tone);
+        }
+      }
+      tempEyedropRef.current = true;
+      return;
+    }
+
+    // Shift+click for straight line from last drawn point
+    if (shiftHeld.current && lastDrawPos.current &&
+        (activeTool === 'pencil' || activeTool === 'eraser')) {
+      const erase = activeTool === 'eraser';
+      drawLine(lastDrawPos.current.x, lastDrawPos.current.y, px, py, erase);
+      lastDrawPos.current = { x: px, y: py };
+      onCommitPixels(erase ? 'Erase line' : 'Draw line');
+      return;
+    }
 
     switch (activeTool) {
       case 'pencil':
@@ -392,14 +588,24 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
         onSelectionChange(null);
         break;
     }
-  }, [screenToPixel, activeTool, drawBrush, project, selectedColourSetId, selectedTone, onFill, onEyedrop, onSelectionChange]);
+  }, [screenToPixel, activeTool, drawBrush, drawLine, project, selectedColourSetId, selectedTone,
+      onFill, onEyedrop, onSelectionChange, onCommitPixels, splitViewMode, splitViewPosition]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const { x: px, y: py } = screenToPixel(e.clientX, e.clientY);
     onCursorChange(px, py);
+    setCursorPixel({ x: px, y: py });
 
-    // Note: cursor highlight drawing is not implemented in the render loop,
-    // so we don't trigger a full redraw on every mouse move.
+    // Split divider drag
+    if (isDraggingSplit.current) {
+      const container = containerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const pos = (e.clientX - rect.left) / container.clientWidth;
+        onSplitPositionChange(pos);
+      }
+      return;
+    }
 
     if (isPanning.current) {
       const dx = e.clientX - lastPanPos.current.x;
@@ -422,9 +628,20 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       const sh = Math.abs(py - selectionStart.current.y) + 1;
       onSelectionChange({ x: sx, y: sy, width: sw, height: sh });
     }
-  }, [screenToPixel, panX, panY, activeTool, project, drawLine, onCursorChange, onPanChange, onSelectionChange]);
 
-  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    // Shift+draw preview needs redraw
+    if (shiftHeld.current && lastDrawPos.current && (activeTool === 'pencil' || activeTool === 'eraser')) {
+      needsRedraw.current = true;
+    }
+  }, [screenToPixel, panX, panY, activeTool, project, drawLine, onCursorChange, onPanChange,
+      onSelectionChange, onSplitPositionChange]);
+
+  const handleMouseUp = useCallback(() => {
+    if (isDraggingSplit.current) {
+      isDraggingSplit.current = false;
+      return;
+    }
+
     if (isPanning.current) {
       isPanning.current = false;
       return;
@@ -432,7 +649,6 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
 
     if (isDrawing.current) {
       isDrawing.current = false;
-      lastDrawPos.current = null;
       onCommitPixels(activeTool === 'eraser' ? 'Erase' : 'Draw');
     }
 
@@ -440,11 +656,16 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       isSelecting.current = false;
       selectionStart.current = null;
     }
+
+    if (tempEyedropRef.current) {
+      tempEyedropRef.current = false;
+    }
   }, [activeTool, onCommitPixels]);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
     if (isPanning.current) return;
+
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
     const newZoom = Math.max(0.1, Math.min(64, zoom * factor));
 
@@ -469,17 +690,30 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     onZoomChange(newZoom);
   }, [zoom, panX, panY, onZoomChange, onPanChange]);
 
-  // Keyboard handling for space (pan mode)
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    onContextMenu(e.clientX, e.clientY);
+  }, [onContextMenu]);
+
+  // Keyboard handling
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat) {
         spaceHeld.current = true;
         e.preventDefault();
       }
+      if (e.key === 'Control') ctrlHeld.current = true;
+      if (e.key === 'Shift') {
+        shiftHeld.current = true;
+        needsRedraw.current = true;
+      }
     };
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        spaceHeld.current = false;
+      if (e.code === 'Space') spaceHeld.current = false;
+      if (e.key === 'Control') ctrlHeld.current = false;
+      if (e.key === 'Shift') {
+        shiftHeld.current = false;
+        needsRedraw.current = true;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -491,8 +725,8 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
   }, []);
 
   const cursorStyle = spaceHeld.current || isPanning.current ? 'grab'
-    : activeTool === 'eyedropper' ? 'crosshair'
-    : activeTool === 'fill' ? 'crosshair'
+    : ctrlHeld.current ? 'crosshair'
+    : isDraggingSplit.current ? 'col-resize'
     : 'crosshair';
 
   return (
@@ -503,9 +737,9 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onMouseLeave={() => { isPanning.current = false; isDrawing.current = false; }}
+      onMouseLeave={() => { isPanning.current = false; isDrawing.current = false; isDraggingSplit.current = false; }}
       onWheel={handleWheel}
-      onContextMenu={e => e.preventDefault()}
+      onContextMenu={handleContextMenu}
     >
       <canvas ref={canvasRef} />
       <canvas ref={overlayRef} style={{ pointerEvents: 'none' }} />

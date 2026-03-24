@@ -5,6 +5,7 @@ import {
   ProjectState, ToolType, ConversionSettings, SelectionRect,
   HistoryEntry, EMPTY_PIXEL, MAP_SIZE, DEFAULT_CONVERSION_SETTINGS,
   encodePixel, decodePixel, ToneVariant, ExportSettings, RecentProject,
+  RecentColour, AppPreferences, DEFAULT_PREFERENCES, Toast,
 } from '../types';
 import { buildPalette, findNearestColour, findCarpetBlockIndex } from '../utils/colour';
 import { PaletteEntry } from '../types';
@@ -14,6 +15,32 @@ import { exportProject, exportMapDat, bundleAsZip } from '../utils/export';
 
 const MAX_HISTORY = 100;
 const RECENT_PROJECTS_KEY = 'mapart_recent_projects';
+const PREFERENCES_KEY = 'mapart_preferences';
+const LAST_EXPORT_KEY = 'mapart_last_export';
+
+function loadPreferences(): AppPreferences {
+  try {
+    const raw = localStorage.getItem(PREFERENCES_KEY);
+    if (raw) return { ...DEFAULT_PREFERENCES, ...JSON.parse(raw) };
+  } catch { /* ignore */ }
+  return { ...DEFAULT_PREFERENCES };
+}
+
+function savePreferences(prefs: AppPreferences) {
+  try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify(prefs)); } catch { /* ignore */ }
+}
+
+function loadLastExportSettings(): ExportSettings | null {
+  try {
+    const raw = localStorage.getItem(LAST_EXPORT_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return null;
+}
+
+function saveLastExportSettings(settings: ExportSettings) {
+  try { localStorage.setItem(LAST_EXPORT_KEY, JSON.stringify(settings)); } catch { /* ignore */ }
+}
 
 export interface AppState {
   project: ProjectState | null;
@@ -35,6 +62,13 @@ export interface AppState {
   exportDialogOpen: boolean;
   rightSidebarTab: 'palette' | 'settings' | 'materials';
   recentProjects: RecentProject[];
+  recentColours: RecentColour[];
+  preferences: AppPreferences;
+  toasts: Toast[];
+  lastExportSettings: ExportSettings | null;
+  showBeforeAfter: boolean;
+  splitViewPosition: number; // 0-1, default 0.5
+  preferencesOpen: boolean;
 }
 
 function loadRecentProjects(): RecentProject[] {
@@ -88,7 +122,31 @@ export function useAppState() {
     exportDialogOpen: false,
     rightSidebarTab: 'palette',
     recentProjects: loadRecentProjects(),
+    recentColours: [],
+    preferences: loadPreferences(),
+    toasts: [],
+    lastExportSettings: loadLastExportSettings(),
+    showBeforeAfter: false,
+    splitViewPosition: 0.5,
+    preferencesOpen: false,
   });
+
+  // Toast notifications (defined early so other callbacks can use it)
+  const addToast = useCallback((message: string, type: Toast['type'] = 'info', duration = 3000) => {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const toast: Toast = { id, message, type, duration };
+    setState(prev => ({
+      ...prev,
+      toasts: [...prev.toasts.slice(-2), toast],
+    }));
+    setTimeout(() => {
+      setState(prev => ({ ...prev, toasts: prev.toasts.filter(t => t.id !== id) }));
+    }, duration);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setState(prev => ({ ...prev, toasts: prev.toasts.filter(t => t.id !== id) }));
+  }, []);
 
   const historyRef = useRef<HistoryEntry[]>([]);
   const historyIndexRef = useRef(-1);
@@ -140,7 +198,16 @@ export function useAppState() {
   }, []);
 
   const setSelectedColour = useCallback((colourSetId: number, tone: ToneVariant) => {
-    setState(prev => ({ ...prev, selectedColourSetId: colourSetId, selectedTone: tone }));
+    setState(prev => {
+      // Add to recent colours
+      const entry: RecentColour = { colourSetId, tone };
+      const maxRecent = prev.preferences.recentColoursCount;
+      const filtered = prev.recentColours.filter(
+        rc => !(rc.colourSetId === colourSetId && rc.tone === tone)
+      );
+      const recentColours = [entry, ...filtered].slice(0, maxRecent);
+      return { ...prev, selectedColourSetId: colourSetId, selectedTone: tone, recentColours };
+    });
   }, []);
 
   const setZoom = useCallback((zoom: number) => {
@@ -656,21 +723,33 @@ export function useAppState() {
     const currentState = state;
     if (!currentState.project || !currentState.coloursData) return;
 
-    let files: { filename: string; data: Uint8Array }[];
+    try {
+      let files: { filename: string; data: Uint8Array }[];
 
-    if (settings.exportFormat === 'mapdat') {
-      files = await exportMapDat(currentState.project, currentState.coloursData, settings);
-    } else {
-      files = await exportProject(currentState.project, currentState.coloursData, settings);
-    }
+      if (settings.exportFormat === 'mapdat') {
+        files = await exportMapDat(currentState.project, currentState.coloursData, settings);
+      } else {
+        files = await exportProject(currentState.project, currentState.coloursData, settings);
+      }
 
-    if (files.length === 1) {
-      downloadFile(files[0].filename, files[0].data);
-    } else {
-      const zipData = await bundleAsZip(files);
-      downloadFile(`${settings.filename}.zip`, zipData);
+      // Save last export settings for quick export
+      if (currentState.preferences.rememberLastExportSettings) {
+        saveLastExportSettings(settings);
+        setState(prev => ({ ...prev, lastExportSettings: settings }));
+      }
+
+      if (files.length === 1) {
+        downloadFile(files[0].filename, files[0].data);
+        addToast(`Exported ${files[0].filename}`, 'success');
+      } else {
+        const zipData = await bundleAsZip(files);
+        downloadFile(`${settings.filename}.zip`, zipData);
+        addToast(`Exported ${files.length} files as ${settings.filename}.zip`, 'success');
+      }
+    } catch (err) {
+      addToast('Export failed: ' + (err as Error).message, 'error');
     }
-  }, [state]);
+  }, [state, addToast]);
 
   const saveProject = useCallback(() => {
     if (!state.project) return;
@@ -707,7 +786,8 @@ export function useAppState() {
     const thumbnail = generateThumbnail(state.project, state.coloursData);
     const recentProjects = addRecentProject('project', state.project.mapWidth, state.project.mapHeight, thumbnail);
     setState(prev => ({ ...prev, recentProjects }));
-  }, [state.project, state.coloursData]);
+    addToast('Project saved', 'success');
+  }, [state.project, state.coloursData, addToast]);
 
   const loadProject = useCallback((file: File) => {
     const reader = new FileReader();
@@ -758,11 +838,11 @@ export function useAppState() {
         });
       } catch (err) {
         console.error('Failed to load project:', err);
-        alert('Failed to load project file.');
+        addToast('Failed to load project file', 'error');
       }
     };
     reader.readAsText(file);
-  }, []);
+  }, [addToast]);
 
   const setBlockChoice = useCallback((colourSetId: number, blockIndex: number) => {
     setState(prev => {
@@ -776,6 +856,58 @@ export function useAppState() {
       };
     });
   }, []);
+
+  // Preferences
+  const updatePreference = useCallback(<K extends keyof AppPreferences>(key: K, value: AppPreferences[K]) => {
+    setState(prev => {
+      const preferences = { ...prev.preferences, [key]: value };
+      savePreferences(preferences);
+      return { ...prev, preferences };
+    });
+  }, []);
+
+  const setPreferencesOpen = useCallback((open: boolean) => {
+    setState(prev => ({ ...prev, preferencesOpen: open }));
+  }, []);
+
+  // Before/after toggle
+  const setShowBeforeAfter = useCallback((show: boolean) => {
+    setState(prev => ({ ...prev, showBeforeAfter: show }));
+  }, []);
+
+  const setSplitViewPosition = useCallback((pos: number) => {
+    setState(prev => ({ ...prev, splitViewPosition: Math.max(0.1, Math.min(0.9, pos)) }));
+  }, []);
+
+  // Quick export — reuse last settings
+  const quickExport = useCallback(async () => {
+    const currentState = state;
+    if (!currentState.project || !currentState.coloursData) return;
+    if (!currentState.lastExportSettings) {
+      // No previous export — open dialog
+      setState(prev => ({ ...prev, exportDialogOpen: true }));
+      return;
+    }
+    try {
+      const settings = currentState.lastExportSettings;
+      let files: { filename: string; data: Uint8Array }[];
+      if (settings.exportFormat === 'mapdat') {
+        files = await exportMapDat(currentState.project, currentState.coloursData, settings);
+      } else {
+        files = await exportProject(currentState.project, currentState.coloursData, settings);
+      }
+      if (files.length === 1) {
+        downloadFile(files[0].filename, files[0].data);
+        addToast(`Exported ${files[0].filename}`, 'success');
+      } else {
+        const zipData = await bundleAsZip(files);
+        downloadFile(`${settings.filename}.zip`, zipData);
+        addToast(`Exported ${files.length} files as ${settings.filename}.zip`, 'success');
+      }
+    } catch (err) {
+      addToast('Export failed: ' + (err as Error).message, 'error');
+    }
+  }, [state, addToast]);
 
   const canUndo = historyIndexRef.current > 0;
   const canRedo = historyIndexRef.current < historyRef.current.length - 1;
@@ -794,6 +926,10 @@ export function useAppState() {
     openExportDialog, closeExportDialog, doExport,
     saveProject, loadProject, setBlockChoice,
     toggleColourSet, enableAllColourSets, disableAllColourSets,
+    addToast, dismissToast,
+    updatePreference, setPreferencesOpen,
+    setShowBeforeAfter, setSplitViewPosition,
+    quickExport,
   };
 }
 

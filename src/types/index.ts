@@ -161,3 +161,48 @@ export interface RecentProject {
   mapHeight: number;
   thumbnail: string; // data URL
 }
+
+// Recent colour entry for quick palette access
+export interface RecentColour {
+  colourSetId: number;
+  tone: ToneVariant;
+}
+
+// App-level preferences (persisted in localStorage, separate from per-project settings)
+export interface AppPreferences {
+  showMinimap: boolean;
+  showFloatingColourBox: boolean;
+  rightClickPopupPalette: boolean;
+  autoExpandPaletteWhenDrawing: boolean;
+  splitViewMode: boolean;
+  showDifferenceOverlay: boolean;
+  beforeAfterHoldKey: string; // 'Tab' | 'Backslash'
+  recentColoursCount: number;
+  defaultExportFormat: ExportFormat;
+  defaultSupportBlockMode: SupportBlockMode;
+  defaultSupportBlockType: string;
+  rememberLastExportSettings: boolean;
+}
+
+export const DEFAULT_PREFERENCES: AppPreferences = {
+  showMinimap: true,
+  showFloatingColourBox: true,
+  rightClickPopupPalette: true,
+  autoExpandPaletteWhenDrawing: true,
+  splitViewMode: false,
+  showDifferenceOverlay: false,
+  beforeAfterHoldKey: 'Tab',
+  recentColoursCount: 10,
+  defaultExportFormat: 'schematic',
+  defaultSupportBlockMode: 'important_only',
+  defaultSupportBlockType: 'stone',
+  rememberLastExportSettings: true,
+};
+
+// Toast notification
+export interface Toast {
+  id: string;
+  message: string;
+  type: 'info' | 'success' | 'error' | 'warning';
+  duration?: number; // ms, default 3000
+}

@@ -6,8 +6,12 @@ interface DrawerProps {
   id: string;
   title: string;
   defaultOpen?: boolean;
+  disabled?: boolean;
+  disabledHint?: string;
+  forceOpen?: boolean;
   children: React.ReactNode;
   previewContent?: React.ReactNode;
+  onManualCollapse?: () => void;
 }
 
 const STORAGE_KEY = 'mapart-drawer-states';
@@ -30,18 +34,29 @@ function storeState(id: string, open: boolean) {
 }
 
 export const Drawer: React.FC<DrawerProps> = ({
-  id, title, defaultOpen = false, children, previewContent,
+  id, title, defaultOpen = false, disabled = false, disabledHint,
+  forceOpen, children, previewContent, onManualCollapse,
 }) => {
   const stored = getStoredStates();
   const [isOpen, setIsOpen] = useState(stored[id] ?? defaultOpen);
   const contentRef = useRef<HTMLDivElement>(null);
   const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
 
+  // Handle programmatic open
+  useEffect(() => {
+    if (forceOpen && !isOpen && !disabled) {
+      setIsOpen(true);
+      storeState(id, true);
+    }
+  }, [forceOpen, id, isOpen, disabled]);
+
   const toggle = useCallback(() => {
+    if (disabled) return;
     const next = !isOpen;
     setIsOpen(next);
     storeState(id, next);
-  }, [id, isOpen]);
+    if (!next && onManualCollapse) onManualCollapse();
+  }, [id, isOpen, disabled, onManualCollapse]);
 
   useEffect(() => {
     if (isOpen && contentRef.current) {
@@ -50,10 +65,13 @@ export const Drawer: React.FC<DrawerProps> = ({
   }, [isOpen, children]);
 
   return (
-    <div className={`drawer ${isOpen ? 'open' : 'closed'}`}>
+    <div className={`drawer ${isOpen ? 'open' : 'closed'} ${disabled ? 'disabled' : ''}`}>
       <div className="drawer-header" onClick={toggle}>
         <span className={`drawer-arrow ${isOpen ? 'open' : ''}`}>{'\u25B8'}</span>
         <span className="drawer-title">{title}</span>
+        {disabled && disabledHint && (
+          <span className="drawer-hint">{disabledHint}</span>
+        )}
       </div>
       {!isOpen && previewContent && (
         <div className="drawer-preview">{previewContent}</div>

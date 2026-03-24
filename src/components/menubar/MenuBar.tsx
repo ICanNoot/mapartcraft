@@ -6,12 +6,14 @@ interface MenuBarProps {
   hasProject: boolean;
   canUndo: boolean;
   canRedo: boolean;
+  hasLastExport: boolean;
   onNewProject: () => void;
   onNewBlankProject: () => void;
   onOpenImage: () => void;
   onSaveProject: () => void;
   onLoadProject: () => void;
   onExport: () => void;
+  onQuickExport: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onZoomIn: () => void;
@@ -19,8 +21,14 @@ interface MenuBarProps {
   onFitToWindow: () => void;
   onToggleGrid: () => void;
   onToggleMapBorders: () => void;
+  onToggleSplitView: () => void;
+  onToggleDiffOverlay: () => void;
+  onOpenPreferences: () => void;
   showGrid: boolean;
   showMapBorders: boolean;
+  splitViewMode: boolean;
+  showDiffOverlay: boolean;
+  hasSourceImage: boolean;
 }
 
 interface MenuItem {
@@ -33,10 +41,12 @@ interface MenuItem {
 }
 
 export const MenuBar: React.FC<MenuBarProps> = ({
-  hasProject, canUndo, canRedo,
+  hasProject, canUndo, canRedo, hasLastExport,
   onNewProject, onNewBlankProject, onOpenImage, onSaveProject, onLoadProject,
-  onExport, onUndo, onRedo, onZoomIn, onZoomOut, onFitToWindow,
-  onToggleGrid, onToggleMapBorders, showGrid, showMapBorders,
+  onExport, onQuickExport, onUndo, onRedo, onZoomIn, onZoomOut, onFitToWindow,
+  onToggleGrid, onToggleMapBorders, onToggleSplitView, onToggleDiffOverlay,
+  onOpenPreferences, showGrid, showMapBorders, splitViewMode, showDiffOverlay,
+  hasSourceImage,
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -49,7 +59,8 @@ export const MenuBar: React.FC<MenuBarProps> = ({
       { label: 'Save Project', shortcut: 'Ctrl+S', action: onSaveProject, disabled: !hasProject },
       { label: 'Load Project...', action: onLoadProject },
       { label: 'separator2', separator: true },
-      { label: 'Export NBT...', shortcut: 'Ctrl+E', action: onExport, disabled: !hasProject },
+      { label: 'Export...', shortcut: 'Ctrl+E', action: onExport, disabled: !hasProject },
+      { label: 'Quick Export', shortcut: 'Ctrl+Shift+E', action: onQuickExport, disabled: !hasProject || !hasLastExport },
     ],
     Edit: [
       { label: 'Undo', shortcut: 'Ctrl+Z', action: onUndo, disabled: !canUndo },
@@ -62,6 +73,9 @@ export const MenuBar: React.FC<MenuBarProps> = ({
       { label: 'separator', separator: true },
       { label: 'Show Grid', action: onToggleGrid, checked: showGrid },
       { label: 'Show Map Borders', action: onToggleMapBorders, checked: showMapBorders },
+      { label: 'separator2', separator: true },
+      { label: 'Split View', action: onToggleSplitView, checked: splitViewMode, disabled: !hasSourceImage },
+      { label: 'Show Differences', shortcut: 'D', action: onToggleDiffOverlay, checked: showDiffOverlay, disabled: !hasSourceImage },
     ],
   };
 
@@ -127,6 +141,10 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           )}
         </div>
       ))}
+      <div style={{ flex: 1 }} />
+      <button className="menu-prefs-btn" onClick={onOpenPreferences} title="Preferences">
+        {'\u2699'}
+      </button>
     </div>
   );
 };

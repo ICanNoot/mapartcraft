@@ -3,17 +3,21 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useAppState } from './hooks/useAppState';
 import { MenuBar } from './components/menubar/MenuBar';
-import { ToolbarStrip } from './components/toolbar/ToolbarStrip';
+import { ToolRail } from './components/toolbar/ToolRail';
 import { PixelCanvas } from './components/canvas/PixelCanvas';
 import { FloatingColourBox } from './components/canvas/FloatingColourBox';
+import { Minimap } from './components/canvas/Minimap';
+import { PopupPalette } from './components/canvas/PopupPalette';
 import { PalettePanel } from './components/palette/PalettePanel';
 import { SettingsPanel } from './components/settings/SettingsPanel';
 import { MaterialsPanel } from './components/materials/MaterialsPanel';
 import { BlockInfoDrawer } from './components/drawers/BlockInfoDrawer';
 import { Drawer } from './components/drawers/Drawer';
 import { StatusBar } from './components/statusbar/StatusBar';
+import { ToastContainer } from './components/toast/ToastContainer';
 import { ExportDialog } from './components/dialogs/ExportDialog';
 import { NewProjectDialog } from './components/dialogs/NewProjectDialog';
+import { PreferencesDialog } from './components/dialogs/PreferencesDialog';
 import { loadImage } from './utils/imageProcessing';
 import { ToneVariant, DEFAULT_CONVERSION_SETTINGS } from './types';
 
@@ -31,30 +35,84 @@ const App: React.FC = () => {
     deleteSelection, openExportDialog, closeExportDialog,
     doExport, saveProject, loadProject, setBlockChoice,
     toggleColourSet, enableAllColourSets, disableAllColourSets,
+    addToast, dismissToast,
+    updatePreference, setPreferencesOpen,
+    setShowBeforeAfter, setSplitViewPosition,
+    quickExport,
   } = useAppState();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
+  const [popupPalette, setPopupPalette] = useState<{ x: number; y: number } | null>(null);
+  const [canvasDims, setCanvasDims] = useState({ w: 800, h: 600 });
+
+  // Track whether user manually collapsed palette (for auto-expand logic)
+  const paletteManuallyCollapsed = useRef(false);
+  const paletteAutoExpanded = useRef(false);
 
   // Load colour data on mount
   useEffect(() => {
     setColoursData(coloursJSON as Record<string, any>);
   }, [setColoursData]);
 
+  // Track canvas area dimensions for minimap
+  useEffect(() => {
+    const el = canvasAreaRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      setCanvasDims({ w: el.clientWidth, h: el.clientHeight });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
 
-      if (!e.ctrlKey && !e.metaKey) {
+      // Before/after hold key
+      const holdKey = state.preferences.beforeAfterHoldKey;
+      if ((holdKey === 'Tab' && e.key === 'Tab') ||
+          (holdKey === 'Backslash' && e.key === '\\')) {
+        if (state.project?.sourceImageData) {
+          e.preventDefault();
+          setShowBeforeAfter(true);
+        }
+        return;
+      }
+
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
         switch (e.key.toLowerCase()) {
           case 'b': setTool('pencil'); return;
           case 'e': setTool('eraser'); return;
           case 'i': setTool('eyedropper'); return;
           case 'g': setTool('fill'); return;
           case 'm': setTool('selection'); return;
+          case 'd':
+            // Toggle difference overlay
+            if (state.project?.sourceImageData) {
+              updatePreference('showDifferenceOverlay', !state.preferences.showDifferenceOverlay);
+            }
+            return;
+        }
+
+        // Number keys 1-9, 0 for recent colours
+        if (e.key >= '1' && e.key <= '9') {
+          const idx = parseInt(e.key) - 1;
+          if (idx < state.recentColours.length) {
+            const rc = state.recentColours[idx];
+            setSelectedColour(rc.colourSetId, rc.tone);
+          }
+          return;
+        }
+        if (e.key === '0' && state.recentColours.length >= 10) {
+          const rc = state.recentColours[9];
+          setSelectedColour(rc.colourSetId, rc.tone);
+          return;
         }
       }
 
@@ -79,7 +137,12 @@ const App: React.FC = () => {
             return;
           case 'e':
             e.preventDefault();
-            if (state.project) openExportDialog();
+            if (e.shiftKey) {
+              // Quick export
+              if (state.project) quickExport();
+            } else {
+              if (state.project) openExportDialog();
+            }
             return;
           case 'o':
             e.preventDefault();
@@ -101,9 +164,43 @@ const App: React.FC = () => {
       }
     };
 
+    const handleKeyUp = (e: KeyboardEvent) => {
+      const holdKey = state.preferences.beforeAfterHoldKey;
+      if ((holdKey === 'Tab' && e.key === 'Tab') ||
+          (holdKey === 'Backslash' && e.key === '\\')) {
+        setShowBeforeAfter(false);
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [state.zoom, state.selection, state.clipboard, state.project, setTool, undo, redo, copySelection, pasteClipboard, deleteSelection, saveProject, openExportDialog, setZoom]);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [state.zoom, state.selection, state.clipboard, state.project, state.recentColours,
+      state.preferences, setTool, undo, redo, copySelection, pasteClipboard, deleteSelection,
+      saveProject, openExportDialog, setZoom, setSelectedColour, setShowBeforeAfter,
+      updatePreference, quickExport]);
+
+  // Alt+scroll to cycle palette colours
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      if (!e.altKey || state.palette.length === 0) return;
+      if ((e.target as HTMLElement).closest('.canvas-container')) {
+        e.preventDefault();
+        const currentIdx = state.palette.findIndex(
+          p => p.colourSetId === state.selectedColourSetId && p.tone === state.selectedTone
+        );
+        const delta = e.deltaY > 0 ? 1 : -1;
+        const nextIdx = (currentIdx + delta + state.palette.length) % state.palette.length;
+        const next = state.palette[nextIdx];
+        setSelectedColour(next.colourSetId, next.tone);
+      }
+    };
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, [state.palette, state.selectedColourSetId, state.selectedTone, setSelectedColour]);
 
   // Clipboard image paste
   useEffect(() => {
@@ -128,9 +225,20 @@ const App: React.FC = () => {
     return () => document.removeEventListener('paste', handlePaste);
   }, [importImage]);
 
+  // Auto-expand palette when switching to drawing tool
+  useEffect(() => {
+    if (!state.preferences.autoExpandPaletteWhenDrawing) return;
+    if (!state.project) return;
+    if (paletteManuallyCollapsed.current) return;
+    if (paletteAutoExpanded.current) return;
+    if (state.activeTool === 'pencil' || state.activeTool === 'fill') {
+      paletteAutoExpanded.current = true;
+    }
+  }, [state.activeTool, state.project, state.preferences.autoExpandPaletteWhenDrawing]);
+
   const fitToWindow = useCallback(() => {
     if (!state.project) return;
-    const availW = window.innerWidth - 320;
+    const availW = window.innerWidth - 350; // tool rail + right panel
     const availH = window.innerHeight - 100;
     const z = Math.min(availW / state.project.pixelWidth, availH / state.project.pixelHeight);
     setZoom(z);
@@ -150,9 +258,9 @@ const App: React.FC = () => {
       importImage(img);
     } catch (err) {
       console.error('Failed to load image:', err);
-      alert('Failed to load image file.');
+      addToast('Failed to load image file', 'error');
     }
-  }, [importImage, loadProject]);
+  }, [importImage, loadProject, addToast]);
 
   const handleProjectFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -161,7 +269,7 @@ const App: React.FC = () => {
     loadProject(file);
   }, [loadProject]);
 
-  // Drag and drop handlers
+  // Drag and drop
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -216,6 +324,26 @@ const App: React.FC = () => {
     setShowNewProjectDialog(false);
   }, [state.coloursData, createProject]);
 
+  // Right-click popup palette
+  const handleCanvasContextMenu = useCallback((x: number, y: number) => {
+    if (!state.preferences.rightClickPopupPalette || !state.project) return;
+    setPopupPalette({ x, y });
+  }, [state.preferences.rightClickPopupPalette, state.project]);
+
+  const handlePopupColourSelect = useCallback((colourSetId: number, tone: ToneVariant) => {
+    setSelectedColour(colourSetId, tone);
+  }, [setSelectedColour]);
+
+  // Palette swatch click on tool rail opens palette drawer
+  const handleColourSwatchClick = useCallback(() => {
+    // Just a hint — the drawer auto-expand handles this
+    paletteManuallyCollapsed.current = false;
+    paletteAutoExpanded.current = false;
+  }, []);
+
+  const hasProject = !!state.project;
+  const shouldForceOpenPalette = hasProject && paletteAutoExpanded.current && !paletteManuallyCollapsed.current;
+
   return (
     <div
       className="app-container"
@@ -245,15 +373,17 @@ const App: React.FC = () => {
       )}
 
       <MenuBar
-        hasProject={!!state.project}
+        hasProject={hasProject}
         canUndo={canUndo}
         canRedo={canRedo}
+        hasLastExport={!!state.lastExportSettings}
         onNewProject={() => fileInputRef.current?.click()}
         onNewBlankProject={() => setShowNewProjectDialog(true)}
         onOpenImage={() => fileInputRef.current?.click()}
         onSaveProject={saveProject}
         onLoadProject={() => projectInputRef.current?.click()}
         onExport={openExportDialog}
+        onQuickExport={quickExport}
         onUndo={undo}
         onRedo={redo}
         onZoomIn={() => setZoom(state.zoom * 1.25)}
@@ -261,36 +391,34 @@ const App: React.FC = () => {
         onFitToWindow={fitToWindow}
         onToggleGrid={toggleGrid}
         onToggleMapBorders={toggleMapBorders}
+        onToggleSplitView={() => updatePreference('splitViewMode', !state.preferences.splitViewMode)}
+        onToggleDiffOverlay={() => updatePreference('showDifferenceOverlay', !state.preferences.showDifferenceOverlay)}
+        onOpenPreferences={() => setPreferencesOpen(true)}
         showGrid={state.showGrid}
         showMapBorders={state.showMapBorders}
-      />
-
-      <ToolbarStrip
-        hasProject={!!state.project}
-        activeTool={state.activeTool}
-        brushSize={state.brushSize}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        showGrid={state.showGrid}
-        showMapBorders={state.showMapBorders}
-        onToolChange={setTool}
-        onBrushSizeChange={setBrushSize}
-        onOpenImage={() => fileInputRef.current?.click()}
-        onNewProject={() => setShowNewProjectDialog(true)}
-        onSaveProject={saveProject}
-        onExport={openExportDialog}
-        onUndo={undo}
-        onRedo={redo}
-        onZoomIn={() => setZoom(state.zoom * 1.25)}
-        onZoomOut={() => setZoom(state.zoom / 1.25)}
-        onFitToWindow={fitToWindow}
-        onToggleGrid={toggleGrid}
-        onToggleMapBorders={toggleMapBorders}
+        splitViewMode={state.preferences.splitViewMode}
+        showDiffOverlay={state.preferences.showDifferenceOverlay}
+        hasSourceImage={!!state.project?.sourceImageData}
       />
 
       <div className="app-main">
+        <ToolRail
+          activeTool={state.activeTool}
+          brushSize={state.brushSize}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          selectedColourSetId={state.selectedColourSetId}
+          selectedTone={state.selectedTone}
+          coloursData={state.coloursData}
+          onToolChange={setTool}
+          onBrushSizeChange={setBrushSize}
+          onUndo={undo}
+          onRedo={redo}
+          onColourSwatchClick={handleColourSwatchClick}
+        />
+
         {state.project ? (
-          <div className="canvas-area">
+          <div className="canvas-area" ref={canvasAreaRef}>
             <PixelCanvas
               project={state.project}
               coloursData={state.coloursData!}
@@ -306,6 +434,10 @@ const App: React.FC = () => {
               selection={state.selection}
               canvasBackground={state.project.conversionSettings.canvasBackground}
               customBackgroundColour={state.project.conversionSettings.customBackgroundColour}
+              showBeforeAfter={state.showBeforeAfter}
+              splitViewMode={state.preferences.splitViewMode}
+              splitViewPosition={state.splitViewPosition}
+              showDifferenceOverlay={state.preferences.showDifferenceOverlay}
               onZoomChange={setZoom}
               onPanChange={setPan}
               onCursorChange={setCursor}
@@ -314,13 +446,48 @@ const App: React.FC = () => {
               onFill={fillArea}
               onEyedrop={handleEyedrop}
               onSelectionChange={setSelection}
+              onContextMenu={handleCanvasContextMenu}
+              onSplitPositionChange={setSplitViewPosition}
             />
-            <FloatingColourBox
-              selectedColourSetId={state.selectedColourSetId}
-              selectedTone={state.selectedTone}
-              coloursData={state.coloursData}
-              blockChoices={state.project.blockChoices}
-            />
+
+            {state.preferences.showMinimap && (
+              <Minimap
+                project={state.project}
+                coloursData={state.coloursData!}
+                zoom={state.zoom}
+                panX={state.panX}
+                panY={state.panY}
+                canvasWidth={canvasDims.w}
+                canvasHeight={canvasDims.h}
+                selectedColourSetId={state.selectedColourSetId}
+                selectedTone={state.selectedTone}
+                onPanChange={setPan}
+              />
+            )}
+
+            {state.preferences.showFloatingColourBox && (
+              <FloatingColourBox
+                selectedColourSetId={state.selectedColourSetId}
+                selectedTone={state.selectedTone}
+                coloursData={state.coloursData}
+                blockChoices={state.project.blockChoices}
+              />
+            )}
+
+            {popupPalette && (
+              <PopupPalette
+                x={popupPalette.x}
+                y={popupPalette.y}
+                palette={state.palette}
+                coloursData={state.coloursData}
+                recentColours={state.recentColours}
+                selectedColourSetId={state.selectedColourSetId}
+                selectedTone={state.selectedTone}
+                disabledColourSets={state.project.disabledColourSets}
+                onSelectColour={handlePopupColourSelect}
+                onClose={() => setPopupPalette(null)}
+              />
+            )}
           </div>
         ) : (
           <div
@@ -380,7 +547,25 @@ const App: React.FC = () => {
         )}
 
         <div className="right-panel">
-          <Drawer id="palette" title="Palette" defaultOpen={true}>
+          {!hasProject && (
+            <div className="right-panel-guide">
+              <div className="guide-title">Getting Started</div>
+              <div className="guide-step">1. Drop an image or click the drop zone</div>
+              <div className="guide-step">2. Adjust settings in the Settings drawer</div>
+              <div className="guide-step">3. Edit pixels with the drawing tools</div>
+              <div className="guide-step">4. Export your map art as NBT</div>
+            </div>
+          )}
+
+          <Drawer
+            id="palette"
+            title="Palette"
+            defaultOpen={true}
+            disabled={!hasProject}
+            disabledHint="Load an image to enable"
+            forceOpen={shouldForceOpenPalette}
+            onManualCollapse={() => { paletteManuallyCollapsed.current = true; }}
+          >
             <PalettePanel
               palette={state.palette}
               coloursData={state.coloursData}
@@ -399,7 +584,13 @@ const App: React.FC = () => {
             />
           </Drawer>
 
-          <Drawer id="settings" title="Settings" defaultOpen={true}>
+          <Drawer
+            id="settings"
+            title="Settings"
+            defaultOpen={true}
+            disabled={!hasProject}
+            disabledHint="Load an image to enable"
+          >
             <SettingsPanel
               settings={state.project?.conversionSettings ?? DEFAULT_CONVERSION_SETTINGS}
               hasSourceImage={!!state.project?.sourceImageData}
@@ -410,7 +601,8 @@ const App: React.FC = () => {
             />
           </Drawer>
 
-          <Drawer id="materials" title="Materials" defaultOpen={false}>
+          <Drawer id="materials" title="Materials" defaultOpen={false}
+            disabled={!hasProject} disabledHint="Load an image to enable">
             <MaterialsPanel
               project={state.project}
               coloursData={state.coloursData}
@@ -438,6 +630,8 @@ const App: React.FC = () => {
         zoom={state.zoom}
       />
 
+      <ToastContainer toasts={state.toasts} onDismiss={dismissToast} />
+
       {state.exportDialogOpen && state.project && (
         <ExportDialog
           project={state.project}
@@ -453,6 +647,14 @@ const App: React.FC = () => {
         <NewProjectDialog
           onConfirm={handleNewBlankProject}
           onClose={() => setShowNewProjectDialog(false)}
+        />
+      )}
+
+      {state.preferencesOpen && (
+        <PreferencesDialog
+          preferences={state.preferences}
+          onUpdate={updatePreference}
+          onClose={() => setPreferencesOpen(false)}
         />
       )}
     </div>

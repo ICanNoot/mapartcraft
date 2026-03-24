@@ -1,4 +1,4 @@
-// Right sidebar — colour palette panel with block selection and enable/disable
+// Right sidebar — colour palette panel with colour family grouping
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { ToneVariant, MapMode } from '../../types';
@@ -53,6 +53,20 @@ function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   return [h * 360, s, l];
 }
 
+type ColourFamily = 'Reds' | 'Oranges' | 'Yellows' | 'Greens' | 'Blues' | 'Purples' | 'Greys';
+
+function getColourFamily(hue: number, sat: number): ColourFamily {
+  if (sat < 0.10) return 'Greys';
+  if (hue < 15 || hue >= 345) return 'Reds';
+  if (hue < 45) return 'Oranges';
+  if (hue < 70) return 'Yellows';
+  if (hue < 170) return 'Greens';
+  if (hue < 260) return 'Blues';
+  return 'Purples';
+}
+
+const FAMILY_ORDER: ColourFamily[] = ['Reds', 'Oranges', 'Yellows', 'Greens', 'Blues', 'Purples', 'Greys'];
+
 export const PalettePanel: React.FC<PalettePanelProps> = ({
   palette, coloursData, selectedColourSetId, selectedTone,
   mapMode, carpetOnly, blockChoices, disabledColourSets,
@@ -64,17 +78,18 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
   const [blockPicker, setBlockPicker] = useState<BlockPickerInfo | null>(null);
   const disabledSet = useMemo(() => new Set(disabledColourSets), [disabledColourSets]);
 
-  // Build full list of all colour sets (including disabled ones for the enable/disable UI)
-  const allColourSets = useMemo(() => {
+  // Build grouped colour sets
+  const colourFamilies = useMemo(() => {
     if (!coloursData) return [];
-    const sets: { csId: number; name: string; entries: PaletteEntry[]; disabled: boolean; hue: number; sat: number; light: number }[] = [];
 
-    // Build a map of palette entries per colour set
     const csMap = new Map<number, PaletteEntry[]>();
     for (const entry of palette) {
       if (!csMap.has(entry.colourSetId)) csMap.set(entry.colourSetId, []);
       csMap.get(entry.colourSetId)!.push(entry);
     }
+
+    const groups = new Map<ColourFamily, { csId: number; name: string; entries: PaletteEntry[]; disabled: boolean; hue: number; sat: number; light: number }[]>();
+    for (const f of FAMILY_ORDER) groups.set(f, []);
 
     for (const [key, colourSet] of Object.entries(coloursData)) {
       const csId = parseInt(key);
@@ -90,7 +105,6 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
         if (!nameMatch && !blockMatch) continue;
       }
 
-      // For carpet only, skip non-carpet sets
       if (carpetOnly) {
         const hasCarpet = Object.values(cs.blocks).some(
           (b: any) => b.displayName?.toLowerCase().includes('carpet') && !b.displayName?.toLowerCase().includes('moss')
@@ -98,7 +112,6 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
         if (!hasCarpet) continue;
       }
 
-      // Use palette entries if they exist, else create placeholder entries for disabled sets
       let entries = csMap.get(csId) || [];
       if (isDisabled && entries.length === 0) {
         const tones: ToneVariant[] = mapMode === 'flat' ? ['normal'] : ['dark', 'normal', 'light'];
@@ -110,29 +123,30 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
 
       if (entries.length === 0) continue;
 
-      // Compute HSL from the normal tone (or first available tone) for sorting
       const normalEntry = entries.find(e => e.tone === 'normal') || entries[0];
       const [h, s, l] = rgbToHsl(normalEntry.rgb[0], normalEntry.rgb[1], normalEntry.rgb[2]);
+      const family = getColourFamily(h, s);
 
-      sets.push({
+      groups.get(family)!.push({
         csId, name: cs.colourName || `Colour ${csId}`, entries, disabled: isDisabled,
         hue: h, sat: s, light: l,
       });
     }
 
-    // Sort: greyscale (saturation < 10%) at end sorted by lightness,
-    // chromatic sorted by hue then lightness
-    const GREY_THRESHOLD = 0.10;
-    sets.sort((a, b) => {
-      const aGrey = a.sat < GREY_THRESHOLD;
-      const bGrey = b.sat < GREY_THRESHOLD;
-      if (aGrey !== bGrey) return aGrey ? 1 : -1; // greys at end
-      if (aGrey && bGrey) return a.light - b.light; // greys by lightness
-      if (a.hue !== b.hue) return a.hue - b.hue; // by hue
-      return a.light - b.light; // within same hue, by lightness
-    });
+    // Sort within each group by hue then lightness
+    const result: { family: ColourFamily; sets: typeof groups extends Map<any, infer V> ? V : never }[] = [];
+    for (const family of FAMILY_ORDER) {
+      const sets = groups.get(family)!;
+      if (sets.length === 0) continue;
+      if (family === 'Greys') {
+        sets.sort((a, b) => a.light - b.light);
+      } else {
+        sets.sort((a, b) => a.hue !== b.hue ? a.hue - b.hue : a.light - b.light);
+      }
+      result.push({ family, sets });
+    }
 
-    return sets;
+    return result;
   }, [coloursData, palette, searchQuery, disabledSet, carpetOnly, mapMode]);
 
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -244,31 +258,38 @@ export const PalettePanel: React.FC<PalettePanelProps> = ({
         </div>
       </div>
 
-      <div className="palette-grid">
-        {allColourSets.map(group => (
-          group.entries.map(entry => {
-            const isSelected =
-              entry.colourSetId === selectedColourSetId && entry.tone === selectedTone;
-            return (
-              <div
-                key={`${entry.colourSetId}-${entry.tone}`}
-                className={`palette-swatch ${isSelected ? 'selected' : ''} ${group.disabled ? 'disabled' : ''}`}
-                style={{
-                  backgroundColor: `rgb(${entry.rgb[0]},${entry.rgb[1]},${entry.rgb[2]})`,
-                }}
-                onClick={() => {
-                  if (group.disabled) {
-                    onToggleColourSet(entry.colourSetId);
-                  } else {
-                    onSelectColour(entry.colourSetId, entry.tone);
-                  }
-                }}
-                onContextMenu={e => handleContextMenu(e, entry)}
-                onMouseEnter={e => handleMouseEnter(e, entry)}
-                onMouseLeave={handleMouseLeave}
-              />
-            );
-          })
+      <div className="palette-families">
+        {colourFamilies.map(({ family, sets }) => (
+          <div key={family} className="palette-family">
+            <div className="palette-family-label">{family}</div>
+            <div className="palette-grid">
+              {sets.map(group => (
+                group.entries.map(entry => {
+                  const isSelected =
+                    entry.colourSetId === selectedColourSetId && entry.tone === selectedTone;
+                  return (
+                    <div
+                      key={`${entry.colourSetId}-${entry.tone}`}
+                      className={`palette-swatch ${isSelected ? 'selected' : ''} ${group.disabled ? 'disabled' : ''}`}
+                      style={{
+                        backgroundColor: `rgb(${entry.rgb[0]},${entry.rgb[1]},${entry.rgb[2]})`,
+                      }}
+                      onClick={() => {
+                        if (group.disabled) {
+                          onToggleColourSet(entry.colourSetId);
+                        } else {
+                          onSelectColour(entry.colourSetId, entry.tone);
+                        }
+                      }}
+                      onContextMenu={e => handleContextMenu(e, entry)}
+                      onMouseEnter={e => handleMouseEnter(e, entry)}
+                      onMouseLeave={handleMouseLeave}
+                    />
+                  );
+                })
+              ))}
+            </div>
+          </div>
         ))}
       </div>
 

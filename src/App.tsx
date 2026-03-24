@@ -3,11 +3,14 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useAppState } from './hooks/useAppState';
 import { MenuBar } from './components/menubar/MenuBar';
-import { ToolPanel } from './components/tools/ToolPanel';
+import { ToolbarStrip } from './components/toolbar/ToolbarStrip';
 import { PixelCanvas } from './components/canvas/PixelCanvas';
+import { FloatingColourBox } from './components/canvas/FloatingColourBox';
 import { PalettePanel } from './components/palette/PalettePanel';
 import { SettingsPanel } from './components/settings/SettingsPanel';
 import { MaterialsPanel } from './components/materials/MaterialsPanel';
+import { BlockInfoDrawer } from './components/drawers/BlockInfoDrawer';
+import { Drawer } from './components/drawers/Drawer';
 import { StatusBar } from './components/statusbar/StatusBar';
 import { ExportDialog } from './components/dialogs/ExportDialog';
 import { NewProjectDialog } from './components/dialogs/NewProjectDialog';
@@ -20,7 +23,7 @@ const App: React.FC = () => {
   const {
     state, setTool, setBrushSize, setSelectedColour,
     setZoom, setPan, setCursor, toggleGrid, toggleMapBorders,
-    setColoursData, rebuildPalette, setRightSidebarTab,
+    setColoursData, rebuildPalette,
     importImage, createProject, updateConversionSetting, resizeAndReconvert,
     setPixelsBatch, commitPixels, fillArea,
     undo, redo, canUndo, canRedo,
@@ -69,7 +72,6 @@ const App: React.FC = () => {
               e.preventDefault();
               pasteClipboard(state.selection?.x ?? 0, state.selection?.y ?? 0);
             }
-            // If no internal clipboard, let the native paste event handle image paste
             return;
           case 's':
             e.preventDefault();
@@ -103,7 +105,7 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [state.zoom, state.selection, state.clipboard, state.project, setTool, undo, redo, copySelection, pasteClipboard, deleteSelection, saveProject, openExportDialog, setZoom]);
 
-  // Clipboard image paste — listen for native paste event for immediate loading
+  // Clipboard image paste
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
       if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
@@ -128,8 +130,8 @@ const App: React.FC = () => {
 
   const fitToWindow = useCallback(() => {
     if (!state.project) return;
-    const availW = window.innerWidth - 520;
-    const availH = window.innerHeight - 80;
+    const availW = window.innerWidth - 320;
+    const availH = window.innerHeight - 100;
     const z = Math.min(availW / state.project.pixelWidth, availH / state.project.pixelHeight);
     setZoom(z);
     setPan(-(state.project.pixelWidth * z) / 2, -(state.project.pixelHeight * z) / 2);
@@ -139,12 +141,10 @@ const App: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
-
     if (file.name.endsWith('.mapstudio')) {
       loadProject(file);
       return;
     }
-
     try {
       const img = await loadImage(file);
       importImage(img);
@@ -171,7 +171,6 @@ const App: React.FC = () => {
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only set false if leaving the app container
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     if (e.clientX <= rect.left || e.clientX >= rect.right || e.clientY <= rect.top || e.clientY >= rect.bottom) {
       setIsDragOver(false);
@@ -182,15 +181,12 @@ const App: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
-
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
-
     if (file.name.endsWith('.mapstudio')) {
       loadProject(file);
       return;
     }
-
     if (file.type.startsWith('image/')) {
       try {
         const img = await loadImage(file);
@@ -269,60 +265,93 @@ const App: React.FC = () => {
         showMapBorders={state.showMapBorders}
       />
 
-      <div className="app-main">
-        <ToolPanel
-          activeTool={state.activeTool}
-          brushSize={state.brushSize}
-          selectedColourSetId={state.selectedColourSetId}
-          selectedTone={state.selectedTone}
-          coloursData={state.coloursData}
-          onToolChange={setTool}
-          onBrushSizeChange={setBrushSize}
-        />
+      <ToolbarStrip
+        hasProject={!!state.project}
+        activeTool={state.activeTool}
+        brushSize={state.brushSize}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        showGrid={state.showGrid}
+        showMapBorders={state.showMapBorders}
+        onToolChange={setTool}
+        onBrushSizeChange={setBrushSize}
+        onOpenImage={() => fileInputRef.current?.click()}
+        onNewProject={() => setShowNewProjectDialog(true)}
+        onSaveProject={saveProject}
+        onExport={openExportDialog}
+        onUndo={undo}
+        onRedo={redo}
+        onZoomIn={() => setZoom(state.zoom * 1.25)}
+        onZoomOut={() => setZoom(state.zoom / 1.25)}
+        onFitToWindow={fitToWindow}
+        onToggleGrid={toggleGrid}
+        onToggleMapBorders={toggleMapBorders}
+      />
 
+      <div className="app-main">
         {state.project ? (
-          <PixelCanvas
-            project={state.project}
-            coloursData={state.coloursData!}
-            zoom={state.zoom}
-            panX={state.panX}
-            panY={state.panY}
-            showGrid={state.showGrid}
-            showMapBorders={state.showMapBorders}
-            activeTool={state.activeTool}
-            brushSize={state.brushSize}
-            selectedColourSetId={state.selectedColourSetId}
-            selectedTone={state.selectedTone}
-            selection={state.selection}
-            canvasBackground={state.project.conversionSettings.canvasBackground}
-            customBackgroundColour={state.project.conversionSettings.customBackgroundColour}
-            onZoomChange={setZoom}
-            onPanChange={setPan}
-            onCursorChange={setCursor}
-            onPixelsBatch={setPixelsBatch}
-            onCommitPixels={commitPixels}
-            onFill={fillArea}
-            onEyedrop={handleEyedrop}
-            onSelectionChange={setSelection}
-          />
+          <div className="canvas-area">
+            <PixelCanvas
+              project={state.project}
+              coloursData={state.coloursData!}
+              zoom={state.zoom}
+              panX={state.panX}
+              panY={state.panY}
+              showGrid={state.showGrid}
+              showMapBorders={state.showMapBorders}
+              activeTool={state.activeTool}
+              brushSize={state.brushSize}
+              selectedColourSetId={state.selectedColourSetId}
+              selectedTone={state.selectedTone}
+              selection={state.selection}
+              canvasBackground={state.project.conversionSettings.canvasBackground}
+              customBackgroundColour={state.project.conversionSettings.customBackgroundColour}
+              onZoomChange={setZoom}
+              onPanChange={setPan}
+              onCursorChange={setCursor}
+              onPixelsBatch={setPixelsBatch}
+              onCommitPixels={commitPixels}
+              onFill={fillArea}
+              onEyedrop={handleEyedrop}
+              onSelectionChange={setSelection}
+            />
+            <FloatingColourBox
+              selectedColourSetId={state.selectedColourSetId}
+              selectedTone={state.selectedTone}
+              coloursData={state.coloursData}
+              blockChoices={state.project.blockChoices}
+            />
+          </div>
         ) : (
-          <div className="welcome-screen">
+          <div
+            className="welcome-screen"
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
             <div className="welcome-title">MapArt Studio</div>
             <div className="welcome-subtitle">
-              Minecraft map art editor with pixel-level control.
-              Import an image to get started, or load an existing project.
+              Minecraft map art, pixel by pixel.
             </div>
-            <div className="welcome-actions">
-              <button className="welcome-btn primary" onClick={() => setShowNewProjectDialog(true)}>
-                New Project
+
+            <div
+              className={`welcome-dropzone ${isDragOver ? 'drag-active' : ''}`}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <div className="dropzone-icon">{'\u{1F5BC}'}</div>
+              <div className="dropzone-text">Drop an image here</div>
+              <div className="dropzone-hint">or click to browse</div>
+            </div>
+
+            <div className="welcome-secondary">
+              <button className="welcome-link" onClick={() => setShowNewProjectDialog(true)}>
+                New blank canvas
               </button>
-              <button className="welcome-btn primary" onClick={() => fileInputRef.current?.click()}>
-                Open Image
-              </button>
-              <button className="welcome-btn" onClick={() => projectInputRef.current?.click()}>
-                Load Project
+              <span className="welcome-dot">{'\u00B7'}</span>
+              <button className="welcome-link" onClick={() => projectInputRef.current?.click()}>
+                Load project
               </button>
             </div>
+
             {state.recentProjects.length > 0 && (
               <div className="recent-projects">
                 <div className="recent-title">Recent Projects</div>
@@ -338,7 +367,7 @@ const App: React.FC = () => {
                         <div className="recent-name">{rp.name}</div>
                         <div className="recent-meta">
                           {rp.mapWidth}x{rp.mapHeight} maps
-                          {' — '}
+                          {' \u2014 '}
                           {new Date(rp.date).toLocaleDateString()}
                         </div>
                       </div>
@@ -350,29 +379,8 @@ const App: React.FC = () => {
           </div>
         )}
 
-        <div className="right-sidebar">
-          <div className="sidebar-tabs">
-            <button
-              className={`sidebar-tab ${state.rightSidebarTab === 'palette' ? 'active' : ''}`}
-              onClick={() => setRightSidebarTab('palette')}
-            >
-              Palette
-            </button>
-            <button
-              className={`sidebar-tab ${state.rightSidebarTab === 'settings' ? 'active' : ''}`}
-              onClick={() => setRightSidebarTab('settings')}
-            >
-              Settings
-            </button>
-            <button
-              className={`sidebar-tab ${state.rightSidebarTab === 'materials' ? 'active' : ''}`}
-              onClick={() => setRightSidebarTab('materials')}
-            >
-              Materials
-            </button>
-          </div>
-
-          {state.rightSidebarTab === 'palette' ? (
+        <div className="right-panel">
+          <Drawer id="palette" title="Palette" defaultOpen={true}>
             <PalettePanel
               palette={state.palette}
               coloursData={state.coloursData}
@@ -389,7 +397,9 @@ const App: React.FC = () => {
               onEnableAll={enableAllColourSets}
               onDisableAll={disableAllColourSets}
             />
-          ) : state.rightSidebarTab === 'settings' ? (
+          </Drawer>
+
+          <Drawer id="settings" title="Settings" defaultOpen={true}>
             <SettingsPanel
               settings={state.project?.conversionSettings ?? DEFAULT_CONVERSION_SETTINGS}
               hasSourceImage={!!state.project?.sourceImageData}
@@ -398,18 +408,31 @@ const App: React.FC = () => {
               onSettingChange={updateConversionSetting}
               onMapSizeChange={handleMapSizeChange}
             />
-          ) : (
+          </Drawer>
+
+          <Drawer id="materials" title="Materials" defaultOpen={false}>
             <MaterialsPanel
               project={state.project}
               coloursData={state.coloursData}
             />
-          )}
+          </Drawer>
+
+          <Drawer id="blockinfo" title="Block Info" defaultOpen={false}>
+            <BlockInfoDrawer
+              project={state.project}
+              coloursData={state.coloursData}
+              cursorX={state.cursorX}
+              cursorY={state.cursorY}
+              selectedColourSetId={state.selectedColourSetId}
+              selectedTone={state.selectedTone}
+              blockChoices={state.project?.blockChoices ?? {}}
+            />
+          </Drawer>
         </div>
       </div>
 
       <StatusBar
         project={state.project}
-        coloursData={state.coloursData}
         cursorX={state.cursorX}
         cursorY={state.cursorY}
         zoom={state.zoom}

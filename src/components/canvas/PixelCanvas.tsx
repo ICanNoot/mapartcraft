@@ -122,7 +122,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       }
 
       // Clear
-      ctx.fillStyle = '#111122';
+      ctx.fillStyle = '#1a1917';
       ctx.fillRect(0, 0, cw, ch);
       octx.clearRect(0, 0, cw, ch);
 
@@ -148,7 +148,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
         const isCheckerboard = canvasBackground === 'checkerboard';
         // Checkerboard: 8x8 screen-pixel squares, so size in map-pixels depends on zoom
         const checkerSize = Math.max(1, Math.round(8 / zoom));
-        let bgR = 17, bgG = 17, bgB = 34;
+        let bgR = 26, bgG = 25, bgB = 23;
         if (!isCheckerboard) {
           if (canvasBackground === 'custom') {
             const [cr, cg, cb] = parseHexColour(customBackgroundColour);
@@ -205,7 +205,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       }
 
       // Draw canvas border
-      ctx.strokeStyle = '#555577';
+      ctx.strokeStyle = '#454240';
       ctx.lineWidth = 1;
       ctx.strokeRect(
         Math.floor(offsetX), Math.floor(offsetY),
@@ -232,7 +232,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
 
       // Map borders
       if (showMapBorders) {
-        octx.strokeStyle = '#ff6644';
+        octx.strokeStyle = '#c47a4a';
         octx.lineWidth = zoom >= 2 ? 2 : 1;
         octx.setLineDash([]);
         for (let mx = 0; mx <= Math.ceil(pixelWidth / MAP_SIZE); mx++) {
@@ -253,8 +253,8 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
 
       // Selection overlay
       if (selection) {
-        octx.fillStyle = 'rgba(74, 158, 255, 0.2)';
-        octx.strokeStyle = '#4a9eff';
+        octx.fillStyle = 'rgba(232, 220, 200, 0.2)';
+        octx.strokeStyle = '#e8dcc8';
         octx.lineWidth = 1;
         octx.setLineDash([4, 4]);
 

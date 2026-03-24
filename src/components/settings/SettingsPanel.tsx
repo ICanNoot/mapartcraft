@@ -269,8 +269,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           Preprocessing
           {(settings.brightness !== 0 || settings.contrast !== 0 || settings.saturation !== 0) && (
             <button
-              className="palette-filter-btn"
-              style={{ fontSize: 10, padding: '1px 6px', margin: 0 }}
+              className="reset-link"
               onClick={() => {
                 onSettingChange('brightness', 0);
                 onSettingChange('contrast', 0);

@@ -23,6 +23,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
   // Look up hovered block info
   let blockInfo: string | null = null;
+  let blockMeta: string | null = null;
   if (inBounds && coloursData && project) {
     const idx = cursorY * project.pixelWidth + cursorX;
     const encoded = project.pixels[idx];
@@ -55,7 +56,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           g = Math.round((g * mult[1]) / 255);
           b = Math.round((b * mult[2]) / 255);
         }
-        blockInfo = `${blockName} (${colourName}) — ${decoded.tone} — RGB(${r}, ${g}, ${b})`;
+        blockInfo = blockName;
+        blockMeta = `(${colourName}) — ${decoded.tone} — RGB(${r}, ${g}, ${b})`;
       }
     }
   }
@@ -74,7 +76,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           </div>
           {blockInfo && (
             <div className="status-item">
-              <span className="status-value">{blockInfo}</span>
+              <span className="status-block-name">{blockInfo}</span>
+              <span className="status-value">{blockMeta}</span>
             </div>
           )}
         </>

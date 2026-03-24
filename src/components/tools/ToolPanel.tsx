@@ -82,7 +82,7 @@ export const ToolPanel: React.FC<ToolPanelProps> = ({
           <div
             className="colour-swatch-large"
             style={{
-              backgroundColor: rgb ? `rgb(${rgb[0]},${rgb[1]},${rgb[2]})` : '#333',
+              backgroundColor: rgb ? `rgb(${rgb[0]},${rgb[1]},${rgb[2]})` : '#2d2b28',
             }}
           />
           <div className="colour-info">

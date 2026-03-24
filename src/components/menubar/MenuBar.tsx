@@ -90,9 +90,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
 
   return (
     <div className="menu-bar" ref={menuRef}>
-      <span style={{ fontWeight: 700, fontSize: 13, marginRight: 12, color: 'var(--accent)' }}>
-        MapArt Studio
-      </span>
+      <span className="menu-brand">MapArt Studio</span>
       {Object.entries(menus).map(([name, items]) => (
         <div
           key={name}

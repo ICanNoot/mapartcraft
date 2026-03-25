@@ -23,11 +23,13 @@ interface MenuBarProps {
   onToggleMapBorders: () => void;
   onToggleSplitView: () => void;
   onToggleDiffOverlay: () => void;
+  onToggleDualView: () => void;
   onOpenPreferences: () => void;
   showGrid: boolean;
   showMapBorders: boolean;
   splitViewMode: boolean;
   showDiffOverlay: boolean;
+  dualViewMode: boolean;
   hasSourceImage: boolean;
 }
 
@@ -45,8 +47,8 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   onNewProject, onNewBlankProject, onOpenImage, onSaveProject, onLoadProject,
   onExport, onQuickExport, onUndo, onRedo, onZoomIn, onZoomOut, onFitToWindow,
   onToggleGrid, onToggleMapBorders, onToggleSplitView, onToggleDiffOverlay,
-  onOpenPreferences, showGrid, showMapBorders, splitViewMode, showDiffOverlay,
-  hasSourceImage,
+  onToggleDualView, onOpenPreferences, showGrid, showMapBorders, splitViewMode,
+  showDiffOverlay, dualViewMode, hasSourceImage,
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -75,6 +77,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
       { label: 'Show Map Borders', action: onToggleMapBorders, checked: showMapBorders },
       { label: 'separator2', separator: true },
       { label: 'Split View', action: onToggleSplitView, checked: splitViewMode, disabled: !hasSourceImage },
+      { label: 'Dual Map View', action: onToggleDualView, checked: dualViewMode, disabled: !hasSourceImage },
       { label: 'Show Differences', shortcut: 'D', action: onToggleDiffOverlay, checked: showDiffOverlay, disabled: !hasSourceImage },
     ],
   };

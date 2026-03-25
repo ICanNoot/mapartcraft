@@ -189,6 +189,12 @@ html, body, #root {
   padding: 0 6px;
 }
 
+.rail-undo-redo {
+  flex-direction: row;
+  justify-content: center;
+  gap: 4px;
+}
+
 .rail-divider {
   width: 36px;
   height: 1px;
@@ -1691,4 +1697,144 @@ html, body, #root {
   color: var(--text-secondary);
   margin-top: 2px;
   font-family: var(--font-mono);
+}
+
+/* ==================== Dual Map View ==================== */
+
+.canvas-area.dual-view-active {
+  display: flex;
+  flex-direction: row;
+}
+
+.canvas-area.dual-view-active .canvas-container {
+  flex: 1;
+  min-width: 0;
+}
+
+.dual-view-right-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 2px solid var(--border-groove);
+}
+
+.dual-view-canvas {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.dual-view-canvas canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.dual-view-label {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(26, 25, 23, 0.75);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  pointer-events: none;
+  font-family: var(--font-mono);
+}
+
+.dual-view-bar {
+  background: var(--bg-drawer);
+  border-bottom: 1px solid var(--border-groove);
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.dual-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dual-bar-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.dual-bar-label input[type="checkbox"] {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.dual-bar-select {
+  font-size: 11px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-groove);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-family: var(--font-mono);
+}
+
+.dual-bar-slider {
+  width: 60px;
+  height: 12px;
+  accent-color: var(--accent);
+}
+
+.dual-bar-val {
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  min-width: 24px;
+  text-align: right;
+}
+
+.dual-bar-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border-groove);
+  flex-shrink: 0;
+}
+
+.dual-bar-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 3px;
+  border: 1px solid var(--border-groove);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: var(--font-body);
+  white-space: nowrap;
+}
+
+.dual-bar-btn:hover {
+  background: var(--bg-hover);
+}
+
+.dual-bar-apply {
+  background: var(--accent);
+  color: var(--bg-main);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.dual-bar-apply:hover {
+  filter: brightness(1.1);
+}
+
+.dual-bar-close {
+  padding: 3px 6px;
+  font-size: 13px;
 }

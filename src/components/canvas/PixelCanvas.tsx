@@ -106,18 +106,19 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     needsRedraw.current = true;
   }, [coloursData]);
 
-  // Cache source image as canvas for split view / before-after
+  // Cache original (full-res) image as canvas for split view / before-after
   useEffect(() => {
-    if (!project.sourceImageData) {
+    const imgData = project.originalImageData ?? project.sourceImageData;
+    if (!imgData) {
       srcCanvasRef.current = null;
       return;
     }
     const c = document.createElement('canvas');
-    c.width = project.sourceImageData.width;
-    c.height = project.sourceImageData.height;
-    c.getContext('2d')!.putImageData(project.sourceImageData, 0, 0);
+    c.width = imgData.width;
+    c.height = imgData.height;
+    c.getContext('2d')!.putImageData(imgData, 0, 0);
     srcCanvasRef.current = c;
-  }, [project.sourceImageData]);
+  }, [project.originalImageData, project.sourceImageData]);
 
   // Mark for redraw when relevant state changes
   useEffect(() => {
@@ -250,11 +251,25 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
         const dw = Math.ceil(imgW * zoom);
         const dh = Math.ceil(imgH * zoom);
 
+        // Helper: draw source image with smooth scaling from full-res original
+        const drawSourceSmooth = () => {
+          if (!srcCanvasRef.current) return;
+          const srcC = srcCanvasRef.current;
+          ctx.save();
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          // Map the full original image onto the pixel grid area
+          const imgDx = Math.floor(offsetX);
+          const imgDy = Math.floor(offsetY);
+          const imgDw = Math.ceil(pixelWidth * zoom);
+          const imgDh = Math.ceil(pixelHeight * zoom);
+          ctx.drawImage(srcC, 0, 0, srcC.width, srcC.height, imgDx, imgDy, imgDw, imgDh);
+          ctx.restore();
+        };
+
         if (showSource && !splitViewMode) {
-          // Full before-after: show source image
-          const imgData = renderPixels(project.sourceImageData);
-          tempCtx.putImageData(imgData, 0, 0);
-          ctx.drawImage(tempCanvas, dx, dy, dw, dh);
+          // Full before-after: show source image with smooth scaling
+          drawSourceSmooth();
         } else if (splitViewMode && srcCanvasRef.current) {
           // Split view: left = source, right = converted
           const splitScreenX = cw * splitViewPosition;
@@ -264,14 +279,12 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
           tempCtx.putImageData(convertedData, 0, 0);
           ctx.drawImage(tempCanvas, dx, dy, dw, dh);
 
-          // Clip left side and draw source
+          // Clip left side and draw source with smooth scaling
           ctx.save();
           ctx.beginPath();
           ctx.rect(0, 0, splitScreenX, ch);
           ctx.clip();
-          const sourceData = renderPixels(project.sourceImageData);
-          tempCtx.putImageData(sourceData, 0, 0);
-          ctx.drawImage(tempCanvas, dx, dy, dw, dh);
+          drawSourceSmooth();
           ctx.restore();
 
           // Draw split divider
@@ -294,41 +307,74 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
           ctx.drawImage(tempCanvas, dx, dy, dw, dh);
         }
 
-        // Difference overlay
+        // Difference overlay with normalized heatmap
         if (showDifferenceOverlay && project.sourceImageData && !showSource) {
           const srcData = project.sourceImageData.data;
           const srcW = project.sourceImageData.width;
           const srcH = project.sourceImageData.height;
-          const diffImgData = ctx.createImageData(imgW, imgH);
-          const diffData = diffImgData.data;
+
+          // First pass: compute distances and find actual max
+          const distances = new Float32Array(imgW * imgH);
+          let actualMax = 0;
 
           for (let py = 0; py < imgH; py++) {
             for (let px = 0; px < imgW; px++) {
               const worldX = startPxX + px;
               const worldY = startPxY + py;
-              const idx = (py * imgW + px) * 4;
+              const di = py * imgW + px;
 
-              if (worldX >= srcW || worldY >= srcH) {
+              if (worldX >= srcW || worldY >= srcH) { distances[di] = -1; continue; }
+
+              const encoded = pixels[worldY * pixelWidth + worldX];
+              const rgb = encoded !== EMPTY_PIXEL ? lookup.get(encoded) : null;
+              if (!rgb) { distances[di] = -1; continue; }
+
+              const si = (worldY * srcW + worldX) * 4;
+              const dr = srcData[si] - rgb[0], dg = srcData[si + 1] - rgb[1], db = srcData[si + 2] - rgb[2];
+              const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+              distances[di] = dist;
+              if (dist > actualMax) actualMax = dist;
+            }
+          }
+
+          // Second pass: render heatmap with threshold
+          const diffImgData = ctx.createImageData(imgW, imgH);
+          const diffData = diffImgData.data;
+          const threshold = actualMax * 0.05; // 5% of max = transparent
+
+          for (let py = 0; py < imgH; py++) {
+            for (let px = 0; px < imgW; px++) {
+              const idx = (py * imgW + px) * 4;
+              const dist = distances[py * imgW + px];
+
+              if (dist < 0 || dist <= threshold) {
                 diffData[idx + 3] = 0;
                 continue;
               }
 
-              const si = (worldY * srcW + worldX) * 4;
-              const sr = srcData[si], sg = srcData[si + 1], sb = srcData[si + 2];
+              // Normalize to 0..1 range above threshold
+              const t = actualMax > threshold ? (dist - threshold) / (actualMax - threshold) : 0;
 
-              const encoded = pixels[worldY * pixelWidth + worldX];
-              const rgb = encoded !== EMPTY_PIXEL ? lookup.get(encoded) : null;
-              if (!rgb) { diffData[idx + 3] = 0; continue; }
+              // Heatmap gradient: transparent → yellow → orange → red
+              let r: number, g: number, b: number;
+              if (t < 0.5) {
+                // yellow → orange
+                const s = t * 2; // 0..1
+                r = 255;
+                g = Math.round(220 - s * 80); // 220 → 140
+                b = Math.round(50 - s * 30);  // 50 → 20
+              } else {
+                // orange → red
+                const s = (t - 0.5) * 2; // 0..1
+                r = 255;
+                g = Math.round(140 - s * 110); // 140 → 30
+                b = Math.round(20 - s * 10);   // 20 → 10
+              }
 
-              // Euclidean RGB distance
-              const dr = sr - rgb[0], dg = sg - rgb[1], db = sb - rgb[2];
-              const dist = Math.sqrt(dr * dr + dg * dg + db * db);
-              const maxDist = 441.67; // sqrt(255^2 * 3)
-              const alpha = Math.min(255, Math.floor((dist / maxDist) * 512));
-
-              diffData[idx] = 232;     // warm accent red
-              diffData[idx + 1] = 92;
-              diffData[idx + 2] = 92;
+              const alpha = Math.min(255, Math.round(80 + t * 175)); // 80..255
+              diffData[idx] = r;
+              diffData[idx + 1] = g;
+              diffData[idx + 2] = b;
               diffData[idx + 3] = alpha;
             }
           }
@@ -337,7 +383,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
           diffTempCanvas.width = imgW;
           diffTempCanvas.height = imgH;
           diffTempCanvas.getContext('2d')!.putImageData(diffImgData, 0, 0);
-          ctx.globalAlpha = 0.6;
+          ctx.globalAlpha = 0.7;
           ctx.drawImage(diffTempCanvas, dx, dy, dw, dh);
           ctx.globalAlpha = 1;
         }

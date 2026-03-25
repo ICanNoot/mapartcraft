@@ -69,6 +69,9 @@ export interface AppState {
   showBeforeAfter: boolean;
   splitViewPosition: number; // 0-1, default 0.5
   preferencesOpen: boolean;
+  dualViewMode: boolean;
+  dualViewSettings: ConversionSettings;
+  dualViewPixels: Uint16Array | null;
 }
 
 function loadRecentProjects(): RecentProject[] {
@@ -129,6 +132,9 @@ export function useAppState() {
     showBeforeAfter: false,
     splitViewPosition: 0.5,
     preferencesOpen: false,
+    dualViewMode: false,
+    dualViewSettings: { ...DEFAULT_CONVERSION_SETTINGS },
+    dualViewPixels: null,
   });
 
   // Toast notifications (defined early so other callbacks can use it)
@@ -912,6 +918,68 @@ export function useAppState() {
   const canUndo = historyIndexRef.current > 0;
   const canRedo = historyIndexRef.current < historyRef.current.length - 1;
 
+  // Dual view — independent conversion settings for comparison
+  const dualViewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const setDualViewMode = useCallback((on: boolean) => {
+    setState(prev => {
+      if (on && prev.project?.sourceImageData && prev.coloursData) {
+        // Initialize with current project settings and run conversion
+        const settings = { ...prev.project.conversionSettings };
+        const pixels = runConversion(
+          prev.project.sourceImageData, prev.project.pixelWidth, prev.project.pixelHeight,
+          settings, prev.coloursData, prev.project.disabledColourSets
+        );
+        return { ...prev, dualViewMode: true, dualViewSettings: settings, dualViewPixels: pixels };
+      }
+      return { ...prev, dualViewMode: on, dualViewPixels: on ? prev.dualViewPixels : null };
+    });
+  }, [runConversion]);
+
+  const updateDualViewSetting = useCallback(<K extends keyof ConversionSettings>(
+    key: K, value: ConversionSettings[K], debounce = false
+  ) => {
+    setState(prev => ({
+      ...prev,
+      dualViewSettings: { ...prev.dualViewSettings, [key]: value },
+    }));
+
+    if (dualViewTimerRef.current) clearTimeout(dualViewTimerRef.current);
+    const doReconvert = () => {
+      setState(prev => {
+        if (!prev.project?.sourceImageData || !prev.coloursData) return prev;
+        const settings = { ...prev.dualViewSettings, [key]: value };
+        const pixels = runConversion(
+          prev.project.sourceImageData, prev.project.pixelWidth, prev.project.pixelHeight,
+          settings, prev.coloursData, prev.project.disabledColourSets
+        );
+        return { ...prev, dualViewSettings: settings, dualViewPixels: pixels };
+      });
+    };
+    dualViewTimerRef.current = setTimeout(doReconvert, debounce ? 350 : 10);
+  }, [runConversion]);
+
+  const applyDualViewSettings = useCallback(() => {
+    setState(prev => {
+      if (!prev.project?.sourceImageData || !prev.coloursData || !prev.dualViewPixels) return prev;
+      const settings = { ...prev.dualViewSettings };
+      const pixels = new Uint16Array(prev.dualViewPixels);
+      pushHistory(pixels, 'Applied dual view settings');
+      const palette = buildPalette(
+        prev.coloursData, settings.mapMode, settings.carpetOnly,
+        settings.betterColour, prev.project.disabledColourSets
+      );
+      return {
+        ...prev,
+        project: { ...prev.project, pixels, conversionSettings: settings },
+        palette,
+        dualViewMode: false,
+        dualViewPixels: null,
+      };
+    });
+    addToast('Applied right-side settings to project', 'success');
+  }, [pushHistory, addToast]);
+
   return {
     state, setState,
     setTool, setBrushSize, setSelectedColour,
@@ -930,6 +998,7 @@ export function useAppState() {
     updatePreference, setPreferencesOpen,
     setShowBeforeAfter, setSplitViewPosition,
     quickExport,
+    setDualViewMode, updateDualViewSetting, applyDualViewSettings,
   };
 }
 

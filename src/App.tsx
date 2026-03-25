@@ -8,6 +8,8 @@ import { PixelCanvas } from './components/canvas/PixelCanvas';
 import { FloatingColourBox } from './components/canvas/FloatingColourBox';
 import { Minimap } from './components/canvas/Minimap';
 import { PopupPalette } from './components/canvas/PopupPalette';
+import { DualViewCanvas } from './components/canvas/DualViewCanvas';
+import { DualViewBar } from './components/canvas/DualViewBar';
 import { PalettePanel } from './components/palette/PalettePanel';
 import { SettingsPanel } from './components/settings/SettingsPanel';
 import { MaterialsPanel } from './components/materials/MaterialsPanel';
@@ -39,6 +41,7 @@ const App: React.FC = () => {
     updatePreference, setPreferencesOpen,
     setShowBeforeAfter, setSplitViewPosition,
     quickExport,
+    setDualViewMode, updateDualViewSetting, applyDualViewSettings,
   } = useAppState();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -393,32 +396,36 @@ const App: React.FC = () => {
         onToggleMapBorders={toggleMapBorders}
         onToggleSplitView={() => updatePreference('splitViewMode', !state.preferences.splitViewMode)}
         onToggleDiffOverlay={() => updatePreference('showDifferenceOverlay', !state.preferences.showDifferenceOverlay)}
+        onToggleDualView={() => setDualViewMode(!state.dualViewMode)}
         onOpenPreferences={() => setPreferencesOpen(true)}
         showGrid={state.showGrid}
         showMapBorders={state.showMapBorders}
         splitViewMode={state.preferences.splitViewMode}
         showDiffOverlay={state.preferences.showDifferenceOverlay}
+        dualViewMode={state.dualViewMode}
         hasSourceImage={!!state.project?.sourceImageData}
       />
 
       <div className="app-main">
-        <ToolRail
-          activeTool={state.activeTool}
-          brushSize={state.brushSize}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          selectedColourSetId={state.selectedColourSetId}
-          selectedTone={state.selectedTone}
-          coloursData={state.coloursData}
-          onToolChange={setTool}
-          onBrushSizeChange={setBrushSize}
-          onUndo={undo}
-          onRedo={redo}
-          onColourSwatchClick={handleColourSwatchClick}
-        />
+        {hasProject && (
+          <ToolRail
+            activeTool={state.activeTool}
+            brushSize={state.brushSize}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            selectedColourSetId={state.selectedColourSetId}
+            selectedTone={state.selectedTone}
+            coloursData={state.coloursData}
+            onToolChange={setTool}
+            onBrushSizeChange={setBrushSize}
+            onUndo={undo}
+            onRedo={redo}
+            onColourSwatchClick={handleColourSwatchClick}
+          />
+        )}
 
         {state.project ? (
-          <div className="canvas-area" ref={canvasAreaRef}>
+          <div className={`canvas-area ${state.dualViewMode ? 'dual-view-active' : ''}`} ref={canvasAreaRef}>
             <PixelCanvas
               project={state.project}
               coloursData={state.coloursData!}
@@ -449,6 +456,27 @@ const App: React.FC = () => {
               onContextMenu={handleCanvasContextMenu}
               onSplitPositionChange={setSplitViewPosition}
             />
+
+            {state.dualViewMode && state.dualViewPixels && (
+              <div className="dual-view-right-pane">
+                <DualViewBar
+                  settings={state.dualViewSettings}
+                  onSettingChange={updateDualViewSetting}
+                  onApply={applyDualViewSettings}
+                  onClose={() => setDualViewMode(false)}
+                />
+                <DualViewCanvas
+                  project={state.project}
+                  dualViewPixels={state.dualViewPixels}
+                  coloursData={state.coloursData!}
+                  zoom={state.zoom}
+                  panX={state.panX}
+                  panY={state.panY}
+                  showGrid={state.showGrid}
+                  showMapBorders={state.showMapBorders}
+                />
+              </div>
+            )}
 
             {state.preferences.showMinimap && (
               <Minimap
@@ -546,17 +574,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        <div className="right-panel">
-          {!hasProject && (
-            <div className="right-panel-guide">
-              <div className="guide-title">Getting Started</div>
-              <div className="guide-step">1. Drop an image or click the drop zone</div>
-              <div className="guide-step">2. Adjust settings in the Settings drawer</div>
-              <div className="guide-step">3. Edit pixels with the drawing tools</div>
-              <div className="guide-step">4. Export your map art as NBT</div>
-            </div>
-          )}
-
+        {hasProject && <div className="right-panel">
           <Drawer
             id="palette"
             title="Palette"
@@ -620,7 +638,7 @@ const App: React.FC = () => {
               blockChoices={state.project?.blockChoices ?? {}}
             />
           </Drawer>
-        </div>
+        </div>}
       </div>
 
       <StatusBar

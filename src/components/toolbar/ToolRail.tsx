@@ -40,8 +40,8 @@ export const ToolRail: React.FC<ToolRailProps> = ({
 
   return (
     <div className="tool-rail">
-      {/* Undo/Redo */}
-      <div className="rail-section">
+      {/* Undo/Redo — side by side */}
+      <div className="rail-section rail-undo-redo">
         <button
           className="rail-btn"
           onClick={onUndo}

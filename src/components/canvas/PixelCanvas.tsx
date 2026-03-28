@@ -106,6 +106,18 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
   const splitViewPositionRef = useRef(splitViewPosition);
   const showDifferenceOverlayRef = useRef(showDifferenceOverlay);
   const activeToolRef = useRef(activeTool);
+  const brushSizeRef = useRef(brushSize);
+  const selectedColourSetIdRef = useRef(selectedColourSetId);
+  const selectedToneRef = useRef(selectedTone);
+  const onPixelsBatchRef = useRef(onPixelsBatch);
+  const onCommitPixelsRef = useRef(onCommitPixels);
+  const onFillRef = useRef(onFill);
+  const onEyedropRef = useRef(onEyedrop);
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  const onCursorChangeRef = useRef(onCursorChange);
+  const onPanChangeRef = useRef(onPanChange);
+  const onSplitPositionChangeRef = useRef(onSplitPositionChange);
+  const onZoomChangeRef = useRef(onZoomChange);
 
   // Precompute colour lookup from coloursData
   const colourLookup = useRef<Map<number, [number, number, number]>>(new Map());
@@ -127,7 +139,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     needsRedraw.current = true;
   }, [coloursData]);
 
-  // Sync refs with props
+  // Sync refs with props (runs every render, no deps)
   useEffect(() => {
     projectRef.current = project;
     zoomRef.current = zoom;
@@ -143,6 +155,18 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     splitViewPositionRef.current = splitViewPosition;
     showDifferenceOverlayRef.current = showDifferenceOverlay;
     activeToolRef.current = activeTool;
+    brushSizeRef.current = brushSize;
+    selectedColourSetIdRef.current = selectedColourSetId;
+    selectedToneRef.current = selectedTone;
+    onPixelsBatchRef.current = onPixelsBatch;
+    onCommitPixelsRef.current = onCommitPixels;
+    onFillRef.current = onFill;
+    onEyedropRef.current = onEyedrop;
+    onSelectionChangeRef.current = onSelectionChange;
+    onCursorChangeRef.current = onCursorChange;
+    onPanChangeRef.current = onPanChange;
+    onSplitPositionChangeRef.current = onSplitPositionChange;
+    onZoomChangeRef.current = onZoomChange;
   });
 
   // Mark diff cache dirty when pixel data or source image changes
@@ -551,45 +575,48 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Convert screen coords to pixel coords
+  // Convert screen coords to pixel coords (reads from refs — stable identity)
   const screenToPixel = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
     const container = containerRef.current;
     if (!container) return { x: -1, y: -1 };
     const rect = container.getBoundingClientRect();
     const sx = clientX - rect.left;
     const sy = clientY - rect.top;
-    const offsetX = container.clientWidth / 2 + panX;
-    const offsetY = container.clientHeight / 2 + panY;
-    const px = Math.floor((sx - offsetX) / zoom);
-    const py = Math.floor((sy - offsetY) / zoom);
+    const offsetX = container.clientWidth / 2 + panXRef.current;
+    const offsetY = container.clientHeight / 2 + panYRef.current;
+    const px = Math.floor((sx - offsetX) / zoomRef.current);
+    const py = Math.floor((sy - offsetY) / zoomRef.current);
     return { x: px, y: py };
-  }, [panX, panY, zoom]);
+  }, []);
 
-  // Draw brush at position
+  // Draw brush at position (reads from refs — stable identity)
   const drawBrush = useCallback((px: number, py: number, erase: boolean) => {
-    if (!project) return;
+    const proj = projectRef.current;
+    if (!proj) return;
     const changes: { x: number; y: number; encoded: number }[] = [];
-    const half = Math.floor(brushSize / 2);
-    const encoded = erase ? EMPTY_PIXEL : encodePixel(selectedColourSetId, selectedTone);
+    const half = Math.floor(brushSizeRef.current / 2);
+    const encoded = erase ? EMPTY_PIXEL : encodePixel(selectedColourSetIdRef.current, selectedToneRef.current);
 
     for (let dy = -half; dy <= half; dy++) {
       for (let dx = -half; dx <= half; dx++) {
         const x = px + dx;
         const y = py + dy;
-        if (x >= 0 && x < project.pixelWidth && y >= 0 && y < project.pixelHeight) {
+        if (x >= 0 && x < proj.pixelWidth && y >= 0 && y < proj.pixelHeight) {
           changes.push({ x, y, encoded });
         }
       }
     }
 
     if (changes.length > 0) {
-      onPixelsBatch(changes);
+      onPixelsBatchRef.current(changes);
       needsRedraw.current = true;
     }
-  }, [project, brushSize, selectedColourSetId, selectedTone, onPixelsBatch]);
+  }, []);
 
-  // Draw line between two points
+  // Draw line between two points (reads from refs — stable identity)
   const drawLine = useCallback((x0: number, y0: number, x1: number, y1: number, erase: boolean) => {
+    const proj = projectRef.current;
+    if (!proj) return;
     const dx = Math.abs(x1 - x0);
     const dy = Math.abs(y1 - y0);
     const sx = x0 < x1 ? 1 : -1;
@@ -597,8 +624,8 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     let err = dx - dy;
 
     const changes: { x: number; y: number; encoded: number }[] = [];
-    const half = Math.floor(brushSize / 2);
-    const encoded = erase ? EMPTY_PIXEL : encodePixel(selectedColourSetId, selectedTone);
+    const half = Math.floor(brushSizeRef.current / 2);
+    const encoded = erase ? EMPTY_PIXEL : encodePixel(selectedColourSetIdRef.current, selectedToneRef.current);
 
     let cx = x0, cy = y0;
     while (true) {
@@ -606,7 +633,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
         for (let bdx = -half; bdx <= half; bdx++) {
           const x = cx + bdx;
           const y = cy + bdy;
-          if (x >= 0 && x < project.pixelWidth && y >= 0 && y < project.pixelHeight) {
+          if (x >= 0 && x < proj.pixelWidth && y >= 0 && y < proj.pixelHeight) {
             changes.push({ x, y, encoded });
           }
         }
@@ -619,12 +646,12 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     }
 
     if (changes.length > 0) {
-      onPixelsBatch(changes);
+      onPixelsBatchRef.current(changes);
       needsRedraw.current = true;
     }
-  }, [project, brushSize, selectedColourSetId, selectedTone, onPixelsBatch]);
+  }, []);
 
-  // Mouse event handlers
+  // Mouse event handlers (all read from refs — stable identity)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     const { x: px, y: py } = screenToPixel(e.clientX, e.clientY);
 
@@ -637,12 +664,12 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     }
 
     // Check if clicking on split divider
-    if (splitViewMode && e.button === 0) {
+    if (splitViewModeRef.current && e.button === 0) {
       const container = containerRef.current;
       if (container) {
         const rect = container.getBoundingClientRect();
         const sx = e.clientX - rect.left;
-        const splitX = container.clientWidth * splitViewPosition;
+        const splitX = container.clientWidth * splitViewPositionRef.current;
         if (Math.abs(sx - splitX) < 12) {
           isDraggingSplit.current = true;
           e.preventDefault();
@@ -653,13 +680,16 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
 
     if (e.button !== 0) return;
 
+    const proj = projectRef.current;
+    const tool = activeToolRef.current;
+
     // Ctrl+click = temporary eyedropper
-    if (ctrlHeld.current && activeTool !== 'eyedropper') {
-      if (px >= 0 && px < project.pixelWidth && py >= 0 && py < project.pixelHeight) {
-        const encoded = project.pixels[py * project.pixelWidth + px];
+    if (ctrlHeld.current && tool !== 'eyedropper') {
+      if (px >= 0 && px < proj.pixelWidth && py >= 0 && py < proj.pixelHeight) {
+        const encoded = proj.pixels[py * proj.pixelWidth + px];
         const decoded = decodePixel(encoded);
         if (decoded) {
-          onEyedrop(decoded.colourSetId, decoded.tone);
+          onEyedropRef.current(decoded.colourSetId, decoded.tone);
         }
       }
       tempEyedropRef.current = true;
@@ -668,15 +698,15 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
 
     // Shift+click for straight line from last drawn point
     if (shiftHeld.current && lastDrawPos.current &&
-        (activeTool === 'pencil' || activeTool === 'eraser')) {
-      const erase = activeTool === 'eraser';
+        (tool === 'pencil' || tool === 'eraser')) {
+      const erase = tool === 'eraser';
       drawLine(lastDrawPos.current.x, lastDrawPos.current.y, px, py, erase);
       lastDrawPos.current = { x: px, y: py };
-      onCommitPixels(erase ? 'Erase line' : 'Draw line');
+      onCommitPixelsRef.current(erase ? 'Erase line' : 'Draw line');
       return;
     }
 
-    switch (activeTool) {
+    switch (tool) {
       case 'pencil':
         isDrawing.current = true;
         lastDrawPos.current = { x: px, y: py };
@@ -688,32 +718,31 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
         drawBrush(px, py, true);
         break;
       case 'eyedropper': {
-        if (px >= 0 && px < project.pixelWidth && py >= 0 && py < project.pixelHeight) {
-          const encoded = project.pixels[py * project.pixelWidth + px];
+        if (px >= 0 && px < proj.pixelWidth && py >= 0 && py < proj.pixelHeight) {
+          const encoded = proj.pixels[py * proj.pixelWidth + px];
           const decoded = decodePixel(encoded);
           if (decoded) {
-            onEyedrop(decoded.colourSetId, decoded.tone);
+            onEyedropRef.current(decoded.colourSetId, decoded.tone);
           }
         }
         break;
       }
       case 'fill':
-        if (px >= 0 && px < project.pixelWidth && py >= 0 && py < project.pixelHeight) {
-          onFill(px, py, selectedColourSetId, selectedTone);
+        if (px >= 0 && px < proj.pixelWidth && py >= 0 && py < proj.pixelHeight) {
+          onFillRef.current(px, py, selectedColourSetIdRef.current, selectedToneRef.current);
         }
         break;
       case 'selection':
         isSelecting.current = true;
         selectionStart.current = { x: px, y: py };
-        onSelectionChange(null);
+        onSelectionChangeRef.current(null);
         break;
     }
-  }, [screenToPixel, activeTool, drawBrush, drawLine, project, selectedColourSetId, selectedTone,
-      onFill, onEyedrop, onSelectionChange, onCommitPixels, splitViewMode, splitViewPosition]);
+  }, [screenToPixel, drawBrush, drawLine]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const { x: px, y: py } = screenToPixel(e.clientX, e.clientY);
-    onCursorChange(px, py);
+    onCursorChangeRef.current(px, py);
     cursorPixelRef.current = { x: px, y: py };
 
     // Split divider drag
@@ -722,7 +751,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       if (container) {
         const rect = container.getBoundingClientRect();
         const pos = (e.clientX - rect.left) / container.clientWidth;
-        onSplitPositionChange(pos);
+        onSplitPositionChangeRef.current(pos);
       }
       return;
     }
@@ -730,13 +759,13 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     if (isPanning.current) {
       const dx = e.clientX - lastPanPos.current.x;
       const dy = e.clientY - lastPanPos.current.y;
-      onPanChange(panX + dx, panY + dy);
+      onPanChangeRef.current(panXRef.current + dx, panYRef.current + dy);
       lastPanPos.current = { x: e.clientX, y: e.clientY };
       return;
     }
 
     if (isDrawing.current && lastDrawPos.current) {
-      const erase = activeTool === 'eraser';
+      const erase = activeToolRef.current === 'eraser';
       drawLine(lastDrawPos.current.x, lastDrawPos.current.y, px, py, erase);
       lastDrawPos.current = { x: px, y: py };
     }
@@ -746,15 +775,15 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       const sy = Math.min(selectionStart.current.y, py);
       const sw = Math.abs(px - selectionStart.current.x) + 1;
       const sh = Math.abs(py - selectionStart.current.y) + 1;
-      onSelectionChange({ x: sx, y: sy, width: sw, height: sh });
+      onSelectionChangeRef.current({ x: sx, y: sy, width: sw, height: sh });
     }
 
     // Shift+draw preview needs redraw
-    if (shiftHeld.current && lastDrawPos.current && (activeTool === 'pencil' || activeTool === 'eraser')) {
+    const tool = activeToolRef.current;
+    if (shiftHeld.current && lastDrawPos.current && (tool === 'pencil' || tool === 'eraser')) {
       needsRedraw.current = true;
     }
-  }, [screenToPixel, panX, panY, activeTool, project, drawLine, onCursorChange, onPanChange,
-      onSelectionChange, onSplitPositionChange]);
+  }, [screenToPixel, drawLine]);
 
   const handleMouseUp = useCallback(() => {
     if (isDraggingSplit.current) {
@@ -769,7 +798,7 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
 
     if (isDrawing.current) {
       isDrawing.current = false;
-      onCommitPixels(activeTool === 'eraser' ? 'Erase' : 'Draw');
+      onCommitPixelsRef.current(activeToolRef.current === 'eraser' ? 'Erase' : 'Draw');
     }
 
     if (isSelecting.current) {
@@ -780,14 +809,15 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
     if (tempEyedropRef.current) {
       tempEyedropRef.current = false;
     }
-  }, [activeTool, onCommitPixels]);
+  }, []);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
     if (isPanning.current) return;
 
+    const curZoom = zoomRef.current;
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    const newZoom = Math.max(0.1, Math.min(64, zoom * factor));
+    const newZoom = Math.max(0.1, Math.min(64, curZoom * factor));
 
     // Zoom toward cursor
     const container = containerRef.current;
@@ -798,17 +828,17 @@ export const PixelCanvas: React.FC<PixelCanvasProps> = ({
       const cx = container.clientWidth / 2;
       const cy = container.clientHeight / 2;
 
-      const worldX = (mx - cx - panX) / zoom;
-      const worldY = (my - cy - panY) / zoom;
+      const worldX = (mx - cx - panXRef.current) / curZoom;
+      const worldY = (my - cy - panYRef.current) / curZoom;
 
       const newPanX = mx - cx - worldX * newZoom;
       const newPanY = my - cy - worldY * newZoom;
 
-      onPanChange(newPanX, newPanY);
+      onPanChangeRef.current(newPanX, newPanY);
     }
 
-    onZoomChange(newZoom);
-  }, [zoom, panX, panY, onZoomChange, onPanChange]);
+    onZoomChangeRef.current(newZoom);
+  }, []);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();

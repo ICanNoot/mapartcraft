@@ -344,7 +344,7 @@ html, body, #root {
   bottom: 56px;
   left: 8px;
   background: rgba(37, 36, 34, 0.92);
-  backdrop-filter: blur(8px);
+  /* backdrop-filter removed: forces GPU recomposite on every canvas repaint */
   border: 1px solid var(--border-groove);
   border-radius: 6px;
   padding: 6px;
